@@ -1,0 +1,13 @@
+{
+  "name": "techaxon-monorepo",
+  "scripts": {
+    "dev:docker": "docker compose up -d",
+    "dev:iam": "pnpm --filter techaxon-iam start:dev",
+    "dev:frontend": "pnpm --filter frontend-next dev -p 3001",
+    "dev": "docker compose up -d && concurrently -k -n \"IAM,FRONTEND\" -c \"cyan,magenta\" \"pnpm dev:iam\" \"pnpm dev:frontend\""
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.4"
+  },
+  "packageManager": "pnpm@10.28.0+sha512.05df71d1421f21399e053fde567cea34d446fa02c76571441bfc1c7956e98e363088982d940465fd34480d4d90a0668bc12362f8aa88000a64e83d0b0e47be48"
+}

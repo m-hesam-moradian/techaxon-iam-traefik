@@ -1,0 +1,52 @@
+tls:
+  certificates:
+    - certFile: /etc/traefik/certs/techaxon.localhost.pem
+      keyFile: /etc/traefik/certs/techaxon.localhost-key.pem
+
+http:
+  routers:
+    dashboard-router:
+      rule: "Host(`dashboard.techaxon.localhost`)"
+      entryPoints:
+        - websecure
+      tls: true
+      service: api@internal
+      middlewares:
+        - dashboard-auth
+        - dashboard-ratelimit
+
+    iam-router:
+      rule: "Host(`idp.techaxon.localhost`)"
+      entryPoints:
+        - websecure
+      tls: true
+      service: iam-service
+
+    frontend-router:
+      rule: "Host(`lms.techaxon.localhost`)"
+      entryPoints:
+        - websecure
+      tls: true
+      service: frontend-service
+
+  middlewares:
+    dashboard-auth:
+      basicAuth:
+        users:
+          - "admin:$2y$05$Y9CVLDwUASuIJg5iqxqcUOytrRY0YOtrT3710olGRLmrtVpa/sJxS"
+          # password: password (hashed using htpasswd)
+    dashboard-ratelimit:
+      rateLimit:
+        average: 5
+        burst: 10
+
+  services:
+    iam-service:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:3000"
+
+    frontend-service:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:3001"

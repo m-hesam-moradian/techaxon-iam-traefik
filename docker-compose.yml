@@ -1,0 +1,89 @@
+# docker-compose.yml
+services:
+  # ---------------------------------------------------------------------------
+  # 1. Ephemeral SSL Generator Container
+  # ---------------------------------------------------------------------------
+  certs-generator:
+      image: alpine:latest
+      container_name: techaxon_certs_generator
+      volumes:
+        - ./certs_data:/certs
+      entrypoint: >
+        /bin/sh -c "
+        if [ ! -f /certs/techaxon.localhost.pem ]; then
+          echo '==> Installing mkcert and generating certificates...';
+          apk add --no-cache curl;
+          curl -JLO 'https://dl.filippo.io/mkcert/latest?for=linux/amd64';
+          chmod +x mkcert-v*-linux-amd64;
+          mv mkcert-v*-linux-amd64 /usr/local/bin/mkcert;
+          /usr/local/bin/mkcert -install;
+          cd /certs;
+          /usr/local/bin/mkcert '*.techaxon.localhost' techaxon.localhost;
+          mv _wildcard.techaxon.localhost+1.pem techaxon.localhost.pem;
+          mv _wildcard.techaxon.localhost+1-key.pem techaxon.localhost-key.pem;
+          cp /root/.local/share/mkcert/rootCA.pem /certs/rootCA.pem;
+          echo '==> SSL Certificates and RootCA exported successfully!';
+        fi
+        "
+
+  # ---------------------------------------------------------------------------
+  # 2. Traefik v3.7 Reverse Proxy
+  # ---------------------------------------------------------------------------
+  traefik:
+    image: traefik:v3.7
+    container_name: techaxon_traefik
+    depends_on:
+      certs-generator:
+        condition: service_completed_successfully
+    command:
+      - "--api.dashboard=true"
+      - "--providers.docker=false"
+      - "--providers.file.filename=/etc/traefik/dynamic_config.yml"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+    ports:
+      - "80:80"
+      - "443:443"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./certs_data:/etc/traefik/certs:ro
+      - ./traefik/traefik_dynamic.yml:/etc/traefik/dynamic_config.yml:ro
+    networks:
+      - techaxon_net
+
+  # ---------------------------------------------------------------------------
+  # 3. CouchDB Database
+  # ---------------------------------------------------------------------------
+  couchdb:
+    image: apache/couchdb:3.5.2.1
+    container_name: techaxon_couchdb
+    environment:
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=secret123
+    ports:
+      - "5984:5984"
+    volumes:
+      - couchdb_data:/opt/couchdb/data
+    networks:
+      - techaxon_net
+
+  # ---------------------------------------------------------------------------
+  # 4. Redis Cache
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: techaxon_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - techaxon_net
+
+volumes:
+  certs_data:
+  couchdb_data:
+
+networks:
+  techaxon_net:
+    driver: bridge
