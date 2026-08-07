@@ -1,0 +1,14 @@
+{
+  "folders": [
+    {
+      "name": "IAM",
+      "path": "./techaxon-iam"
+    },
+    {
+      "name": "LMS",
+      "path": "./frontend-next"
+    }
+  ]
+}
+
+// code techaxon.code-workspace
