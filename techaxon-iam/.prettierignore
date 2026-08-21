@@ -1,0 +1,15 @@
+# VSCode
+.vscode/extensions.json
+
+# Node
+node_modules
+
+# Build outputs
+.next
+dist
+
+# Env files
+.env*
+
+# Markdown files
+.md

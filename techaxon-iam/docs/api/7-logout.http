@@ -1,0 +1,53 @@
+### 7a. Logout User - Success Case
+# @name logoutSuccess
+POST http://localhost:3000/auth/logout
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyOjM0YzNmYTNmLWQyNTktNDBmYi05YWI1LThkODlhZjkyZmJjYyIsInNpZCI6InNlc3Npb246MjYyMDI2MDItZTU3ZC00MDY0LTgxNmItMWRhN2Q2ODQxYzY2IiwidHlwZSI6ImFjY2VzcyIsImlhdCI6MTc4NTQyNTg2OSwiZXhwIjoxNzg1NDI2NzY5LCJhdWQiOiJ0ZWNoYXhvbi1hcGkiLCJpc3MiOiJ0ZWNoYXhvbi1pZHAifQ.IzBQFfQ5GQUr5Z5cYLAWL2WeA2tLfhgvL1pMsAARqog
+Content-Type: application/json
+
+{
+  "sessionId": "session:add24c7e-f434-42f1-ae95-1c313446779f"
+}
+
+###
+/*
+===================================================================
+EXPECTED API RESPONSE (200 OK):
+===================================================================
+{
+  "success": true,
+  "message": "Successfully logged out"
+}
+
+===================================================================
+UPDATED COUCHDB SESSION DOCUMENT (Status changed to revoked):
+===================================================================
+{
+  "_id": "session:add24c7e-f434-42f1-ae95-1c313446779f",
+  "_rev": "2-a1b2c3d4e5f678901234567890abcdef",
+  "type": "session",
+  "userId": "user:53ebc1b0-ab42-435e-809f-5799701e1159",
+  "refreshTokenHash": "$2b$10$1aLxGAa3Arx4LqGtCaPkHOplpVqgzPGCs1SWNOlXTBm8H7bn4CnU2",
+  "status": "revoked",
+  "expiresAt": "2026-08-05T13:32:32.864Z",
+  "lastAccessedAt": "2026-07-29T13:32:32.950Z",
+  "createdAt": "2026-07-29T13:32:32.950Z",
+  "updatedAt": "2026-07-30T15:34:23.000Z"
+}
+*/
+
+
+### 7b. Access Protected Route After Logout - Failure Case
+# @name getProfileAfterLogout
+GET http://localhost:3000/auth/me
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyOjUzZWJjMWIwLWFiNDItNDM1ZS04MDlmLTU3OTk3MDFlMTE1OSIsInNpZCI6InNlc3Npb246YWRkMjRjN2UtZjQzNC00MmYxLWFlOTUtMWMzMTM0NDY3NzlmIiwidHlwZSI6ImFjY2VzcyIsImlhdCI6MTc4NTMzMTk1MiwiZXhwIjoxNzg1MzMyODUyLCJhdWQiOiJ0ZWNoYXhvbi1hcGkiLCJpc3OiOiJ0ZWNoYXhvbi1pZHAifQ.ynizC9lLHCV17x6FFowovTzADvNAaiEvXqhtqqt28rk
+Content-Type: application/json
+
+/*
+===================================================================
+EXPECTED API RESPONSE (401 Unauthorized):
+===================================================================
+{
+  "statusCode": 401,
+  "message": "Session has been revoked or expired"
+}
+*/

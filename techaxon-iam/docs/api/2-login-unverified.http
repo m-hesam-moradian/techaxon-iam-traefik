@@ -1,0 +1,28 @@
+### 2. Login Attempt Before Email Verification (Security Test)
+POST http://localhost:3000/auth/login
+Content-Type: application/json
+
+{
+  "email": "saeed@example.com",
+  "password": "Password123!"
+}
+
+###
+
+/*
+===================================================================
+EXPECTED HTTP RESPONSE (401 Unauthorized):
+===================================================================
+{
+  "statusCode": 401,
+  "message": "Please verify your email address first.",
+  "error": "Unauthorized"
+}
+
+===================================================================
+BEHAVIOR NOTE:
+===================================================================
+The authentication attempt must fail because the user status is still
+'pending_verification' and 'emailVerified' is false in CouchDB.
+No session document or JWT tokens are issued at this stage.
+*/

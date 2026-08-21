@@ -1,0 +1,14 @@
+{
+  "recommendations": [
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "ms-vscode.vscode-typescript-next",
+    "pmneo.tsimporter",
+    "usernamehw.errorlens",
+    "eamodio.gitlens",
+    "mikestead.dotenv",
+    "aaron-bond.better-comments",
+    "orta.vscode-jest",
+    "ms-azuretools.vscode-docker"
+  ]
+}

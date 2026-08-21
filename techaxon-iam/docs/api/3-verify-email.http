@@ -1,0 +1,50 @@
+### 3a. Verify Email Address - Success Case
+# @name verifyEmailSuccess
+GET http://localhost:3000/auth/verify-email?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyOmM3ZTdhNmRiLWQxY2UtNGE0Yi04ODMwLTYxYWM5OGE3NzVhMSIsInNpZCI6IiIsInR5cGUiOiJ2ZXJpZmljYXRpb24iLCJpYXQiOjE3ODU0MjYwNjAsImV4cCI6MTc4NTQyOTY2MCwiYXVkIjoidGVjaGF4b24tYXBpIiwiaXNzIjoidGVjaGF4b24taWRwIn0.BPCb5FeC27Tn4c9ayJXPz-0nOOnggJtwnfOthAqEMXc
+Content-Type: application/json
+
+###
+/*
+===================================================================
+EXPECTED API RESPONSE (200 OK):
+===================================================================
+{
+  "success": true,
+  "message": "Email successfully verified. You can now log in."
+}
+
+===================================================================
+UPDATED COUCHDB USER DOCUMENT STATE:
+===================================================================
+{
+  "_id": "user:6f44a9a7-8ffe-497e-9147-83896da2f501",
+  "_rev": "2-c2d134ba1bce9cd4c5927eb22935f892",
+  "type": "user",
+  "username": "saeed",
+  "email": "saeed@example.com",
+  "passwordHash": "$2b$10$bwMPzzwZsq3BjA6ZKYqhqe4mVx1tIpXIJJ5kb.by2SqNsqAELEgr.",
+  "status": "active",             // 👈 Changed from 'pending_verification' to 'active'
+  "emailVerified": true,          // 👈 Changed from false to true
+  "tenantId": null,
+  "createdAt": "2026-07-29T12:59:08.779Z",
+  "updatedAt": "2026-07-29T13:05:12.110Z"
+}
+*/
+
+
+### 3b. Verify Email Address - Failure Case (Invalid/Expired Token)
+# @name verifyEmailFailure
+GET http://localhost:3000/auth/verify-email?token=invalid_or_expired_token_here
+Content-Type: application/json
+
+###
+/*
+===================================================================
+EXPECTED API RESPONSE (401 Unauthorized):
+===================================================================
+{
+  "message": "Invalid or expired verification token",
+  "error": "Unauthorized",
+  "statusCode": 401
+}
+*/

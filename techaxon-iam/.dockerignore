@@ -1,0 +1,29 @@
+# dependencies
+node_modules
+
+# build outputs
+dist
+build
+.next
+out
+
+# git
+.git
+.gitignore
+
+# logs
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# env files (security)
+.env*
+!.env.example
+
+# docker
+Dockerfile*
+docker-compose*.yml
+
+# package managers
+.pnpm-store
+.yarn

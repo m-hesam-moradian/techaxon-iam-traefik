@@ -1,0 +1,42 @@
+### 4. Successful User Login
+# @name loginSuccess
+POST http://localhost:3000/auth/login
+Content-Type: application/json
+
+{
+  "email": "saeed@example.com",
+  "password": "Password123!"
+}
+
+### 
+
+/*
+===================================================================
+EXPECTED API RESPONSE (200 OK):
+===================================================================
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyOjUzZWJjMWIwLWFiNDItNDM1ZS04MDlmLTU3OTk3MDFlMTE1OSIsInNpZCI6InNlc3Npb246YWRkMjRjN2UtZjQzNC00MmYxLWFlOTUtMWMzMTM0NDY3NzlmIiwidHlwZSI6ImFjY2VzcyIsImlhdCI6MTc4NTMzMTk1MiwiZXhwIjoxNzg1MzMyODUyLCJhdWQiOiJ0ZWNoYXhvbi1hcGkiLCJpc3MiOiJ0ZWNoYXhvbi1pZHAifQ.ynizC9lLHCV17x6FFowovTzADvNAaiEvXqhtqqt28rk",
+  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyOjUzZWJjMWIwLWFiNDItNDM1ZS04MDlmLTU3OTk3MDFlMTE1OSIsInNpZCI6InNlc3Npb246YWRkMjRjN2UtZjQzNC00MmYxLWFlOTUtMWMzMTM0NDY3NzlmIiwidHlwZSI6InJlZnJlc2giLCJpYXQiOjE3ODUzMzE5NTIsImV4cCI6MTc4NzkyMzk1MiwiYXVkIjoidGVjaGF4b24tYXBpIiwiaXNzIjoidGVjaGF4b24taWRwIn0.NhHJJ1FZOUt5iOXLuO5_kENYMLru9b04qgCtm6eFp-E",
+  "user": {
+    "id": "user:53ebc1b0-ab42-435e-809f-5799701e1159",
+    "email": "saeed@example.com",
+    "username": "saeed"
+  }
+}
+
+===================================================================
+PERSISTED COUCHDB SESSION DOCUMENT (1 New Doc Created):
+===================================================================
+{
+  "_id": "session:add24c7e-f434-42f1-ae95-1c313446779f",
+  "_rev": "1-57ade14f23313b2ab3dd61bc878abd5c",
+  "type": "session",
+  "userId": "user:53ebc1b0-ab42-435e-809f-5799701e1159",
+  "refreshTokenHash": "$2b$10$1aLxGAa3Arx4LqGtCaPkHOplpVqgzPGCs1SWNOlXTBm8H7bn4CnU2",
+  "status": "active",
+  "expiresAt": "2026-08-05T13:32:32.864Z",
+  "lastAccessedAt": "2026-07-29T13:32:32.950Z",
+  "createdAt": "2026-07-29T13:32:32.950Z",
+  "updatedAt": "2026-07-29T13:32:32.950Z"
+}
+*/

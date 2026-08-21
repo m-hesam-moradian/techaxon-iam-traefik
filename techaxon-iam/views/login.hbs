@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TechAxon ID - Sign In</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #f4f6f8;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+    }
+    .card {
+      background: #ffffff;
+      padding: 2.5rem;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+      width: 100%;
+      max-width: 380px;
+    }
+    .title {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #1a202c;
+      margin-bottom: 0.5rem;
+      text-align: center;
+    }
+    .subtitle {
+      font-size: 0.875rem;
+      color: #718096;
+      margin-bottom: 1.5rem;
+      text-align: center;
+    }
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+    label {
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: #4a5568;
+      margin-bottom: 0.5rem;
+      text-transform: uppercase;
+    }
+    input {
+      width: 100%;
+      padding: 0.75rem;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      box-sizing: border-box;
+      font-size: 0.95rem;
+    }
+    input:focus {
+      outline: none;
+      border-color: #3182ce;
+    }
+    button {
+      width: 100%;
+      padding: 0.75rem;
+      background-color: #0d9488;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #0f766e;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="title">TechAxon ID</div>
+    <div class="subtitle">Sign in to continue to {{clientId}}</div>
+    
+    <form action="/auth/login" method="POST">
+      <!-- Hidden OAuth2 Params -->
+      <input type="hidden" name="clientId" value="{{clientId}}">
+      <input type="hidden" name="redirectUri" value="{{redirectUri}}">
+      <input type="hidden" name="state" value="{{state}}">
+
+      <div class="form-group">
+        <label for="email">Email Address</label>
+        <input type="email" id="email" name="email" required placeholder="name@company.com">
+      </div>
+
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" required placeholder="••••••••">
+      </div>
+
+      <button type="submit">Sign In</button>
+    </form>
+  </div>
+</body>
+</html>

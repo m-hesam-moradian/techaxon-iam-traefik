@@ -1,0 +1,51 @@
+### 1. Register a new user
+# @name register
+POST http://localhost:3000/auth/register
+Content-Type: application/json
+
+{
+  "username": "saeed",
+  "email": "saeed@example.com",
+  "password": "Password123!"
+}
+###
+
+/*
+===================================================================
+EXPECTED API RESPONSE:
+===================================================================
+{
+  "success": true,
+  "id": "user:6f44a9a7-8ffe-497e-9147-83896da2f501",
+  "verificationToken": "eyJhbGciOiJIUzI1Ni..."
+}
+
+===================================================================
+PERSISTED COUCHDB DOCUMENTS (2 Docs Created):
+===================================================================
+1. Claim Document (Atomic Email Reservation):
+{
+  "_id": "email:saeed@example.com",
+  "_rev": "3-2bfbcdd2b45764700d058925dbe28bfa",
+  "type": "email_claim",
+  "email": "saeed@example.com",
+  "userId": "user:6f44a9a7-8ffe-497e-9147-83896da2f501",
+  "createdAt": "2026-07-29T12:59:08.634Z",
+  "updatedAt": "2026-07-29T12:59:08.634Z"
+}
+
+2. User Document:
+{
+  "_id": "user:6f44a9a7-8ffe-497e-9147-83896da2f501",
+  "_rev": "1-a2b025ba1bce9cd4c5927eb22935f791",
+  "type": "user",
+  "username": "saeed",
+  "email": "saeed@example.com",
+  "passwordHash": "$2b$10$bwMPzzwZsq3BjA6ZKYqhqe4mVx1tIpXIJJ5kb.by2SqNsqAELEgr.",
+  "status": "pending_verification",
+  "emailVerified": false,
+  "tenantId": null,
+  "createdAt": "2026-07-29T12:59:08.779Z",
+  "updatedAt": "2026-07-29T12:59:08.779Z"
+}
+*/

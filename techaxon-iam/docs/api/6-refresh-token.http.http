@@ -1,0 +1,38 @@
+### 6a. Refresh Access Token - Success Case
+# @name refreshTokenSuccess
+POST http://localhost:3000/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyOjM0YzNmYTNmLWQyNTktNDBmYi05YWI1LThkODlhZjkyZmJjYyIsInNpZCI6InNlc3Npb246MTEwOWNhZmItYjc0ZS00ZTYzLWE1NzMtZjQwNzFmMjliYTE4IiwidHlwZSI6InJlZnJlc2giLCJpYXQiOjE3ODU0MjU1NTQsImV4cCI6MTc4ODAxNzU1NCwiYXVkIjoidGVjaGF4b24tYXBpIiwiaXNzIjoidGVjaGF4b24taWRwIn0.CSZUDEZFIBlsCutXusNsQys4st7Aygyw7iSn89z3h4s"
+}
+
+### 
+/*
+===================================================================
+EXPECTED API RESPONSE (200 OK):
+===================================================================
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+*/
+
+
+### 6b. Refresh Access Token - Failure Case (Invalid / Expired Refresh Token)
+# @name refreshTokenFailure
+POST http://localhost:3000/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "invalid_or_expired_refresh_token_here"
+}
+
+/*
+===================================================================
+EXPECTED API RESPONSE (401 Unauthorized):
+===================================================================
+{
+  "statusCode": 401,
+  "message": "Invalid or expired refresh token"
+}
+*/
