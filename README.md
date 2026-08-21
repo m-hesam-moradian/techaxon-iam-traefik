@@ -1,4 +1,4 @@
-# TechAxon Local Infrastructure
+# TechAxon Local Infrastructure.
 
 Local development infrastructure for the TechAxon platform.
 
