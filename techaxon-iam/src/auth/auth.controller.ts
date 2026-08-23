@@ -148,8 +148,12 @@ export class AuthController {
       if (userId) {
         const code = await this.authService.generateAuthorizationCode(userId, query.client_id);
 
-        const redirectUrl = `${query.redirect_uri}?code=${code}&state=${query.state}`;
-        res.redirect(302, redirectUrl);
+        const redirectUrl = new URL(query.redirect_uri);
+        redirectUrl.searchParams.set('code', code);
+        if (query.state) {
+          redirectUrl.searchParams.set('state', query.state);
+        }
+        res.redirect(302, redirectUrl.toString());
         return;
       }
     }

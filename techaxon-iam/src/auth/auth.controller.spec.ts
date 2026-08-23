@@ -186,9 +186,42 @@ describe('AuthController', () => {
       );
       expect(mockRes.redirect).toHaveBeenCalledWith(
         302,
-        `${queryDto.redirect_uri}?code=generated-auth-code-hex&state=${queryDto.state}`,
+        'https://app.example.com/callback?code=generated-auth-code-hex&state=random-state-string',
       );
       expect(mockRes.render).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Test:
+     * Redirect URI already contains query parameters (e.g. ?tenant=abc) → merges code and state correctly.
+     */
+    it('should correctly merge code and state when redirect_uri already contains query parameters', async () => {
+      const queryWithParams = {
+        client_id: 'techaxon-lms',
+        redirect_uri: 'https://lms.techaxon.de/auth/callback?tenant=abc',
+        state: 'xyz-state',
+        response_type: 'code' as const,
+      };
+
+      mockAuthService.validateClientRedirectUri.mockResolvedValue(true);
+      mockAuthService.validateRefreshTokenCookie.mockResolvedValue('user:lms-user');
+      mockAuthService.generateAuthorizationCode.mockResolvedValue('auth-code-123');
+
+      const mockReq = {
+        cookies: { techaxon_refresh_token: 'valid-token' },
+      } as unknown as Request;
+
+      const mockRes = {
+        redirect: jest.fn(),
+        render: jest.fn(),
+      } as unknown as Response;
+
+      await controller.authorize(queryWithParams, mockReq, mockRes);
+
+      expect(mockRes.redirect).toHaveBeenCalledWith(
+        302,
+        'https://lms.techaxon.de/auth/callback?tenant=abc&code=auth-code-123&state=xyz-state',
+      );
     });
   });
 
