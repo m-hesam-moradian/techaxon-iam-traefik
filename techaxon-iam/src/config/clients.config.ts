@@ -9,6 +9,36 @@ export interface RegisteredClient {
 }
 
 export const DEFAULT_CLIENTS: Record<string, RegisteredClient> = {
+  'techaxon-lms': {
+    clientId: 'techaxon-lms',
+    clientName: 'TechAxon LMS',
+    allowedRedirectUris: [
+      'https://lms.techaxon.de/auth/callback',
+      'https://lms.techaxon.localhost/auth/callback',
+      'http://localhost:3000/auth/callback',
+      'http://localhost:3001/auth/callback',
+    ],
+  },
+  'techaxon-kanban': {
+    clientId: 'techaxon-kanban',
+    clientName: 'TechAxon Kanban',
+    allowedRedirectUris: [
+      'https://kanban.techaxon.de/auth/callback',
+      'https://kanban.techaxon.localhost/auth/callback',
+      'http://localhost:3000/auth/callback',
+      'http://localhost:3001/auth/callback',
+    ],
+  },
+  'techaxon-shop': {
+    clientId: 'techaxon-shop',
+    clientName: 'TechAxon Shop',
+    allowedRedirectUris: [
+      'https://shop.techaxon.de/auth/callback',
+      'https://shop.techaxon.localhost/auth/callback',
+      'http://localhost:3000/auth/callback',
+      'http://localhost:3001/auth/callback',
+    ],
+  },
   'test-client': {
     clientId: 'test-client',
     clientName: 'Test Client Application',
