@@ -1,0 +1,120 @@
+### ===================================================================
+### TechAxon IAM — OIDC / SSO Authorization Flow E2E Manual Testing
+### ===================================================================
+### This file tests the complete OIDC Authorization Code Grant & SSO flow.
+### Prerequisites: IAM backend running at http://localhost:3000
+### ===================================================================
+
+@baseUrl = http://localhost:3000
+@email = saeed@example.com
+@password = Password123!
+
+# Registered Clients: techaxon-lms, techaxon-kanban, techaxon-shop, test-client
+@clientId = techaxon-lms
+@redirectUri = https://lms.techaxon.de/auth/callback
+@redirectUriWithTenant = https://lms.techaxon.de/auth/callback?tenant=techaxon-corp
+@state = xyz-state-secure-random-123
+
+# -------------------------------------------------------------------
+# 1. Login & Establish IdP Session Cookie
+# -------------------------------------------------------------------
+# Logs in the user and issues:
+# 1. JSON response with accessToken + refreshToken
+# 2. HttpOnly Cookie: techaxon_refresh_token=<token>
+# @name loginStep
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+### Store the Refresh Token from the Login step for cookie simulation
+@refreshToken = {{loginStep.response.body.refreshToken}}
+
+# -------------------------------------------------------------------
+# 2. SSO Active Session: GET /auth/authorize -> 302 Found (Redirect)
+# -------------------------------------------------------------------
+# When the browser has a valid techaxon_refresh_token cookie:
+# 1. Validates client_id and redirect_uri against registered clients.
+# 2. Validates session from cookie.
+# 3. Generates single-use Authorization Code.
+# 4. Responds with HTTP 302 Redirect with ?code=...&state=...
+# @name authorizeWithValidSession
+GET {{baseUrl}}/auth/authorize?client_id={{clientId}}&redirect_uri={{redirectUri}}&state={{state}}&response_type=code
+Cookie: techaxon_refresh_token={{refreshToken}}
+
+# EXPECTED: HTTP/1.1 302 Found
+# Location: https://lms.techaxon.de/auth/callback?code=<hex_auth_code>&state=xyz-state-secure-random-123
+
+
+# -------------------------------------------------------------------
+# 3. Bug Fix Verification: redirect_uri with Pre-existing Query Params
+# -------------------------------------------------------------------
+# Verifies that redirect_uri containing query parameters (?tenant=abc)
+# correctly merges code & state without double '??' (using WHATWG URL).
+# @name authorizeWithQueryParamsInRedirectUri
+GET {{baseUrl}}/auth/authorize?client_id={{clientId}}&redirect_uri={{redirectUriWithTenant}}&state={{state}}&response_type=code
+Cookie: techaxon_refresh_token={{refreshToken}}
+
+# EXPECTED: HTTP/1.1 302 Found
+# Location: https://lms.techaxon.de/auth/callback?tenant=techaxon-corp&code=<hex_auth_code>&state=xyz-state-secure-random-123
+
+
+# -------------------------------------------------------------------
+# 4. No Active Session: GET /auth/authorize -> 200 OK (Render Login View)
+# -------------------------------------------------------------------
+# When user has NO cookie, IAM returns the Handlebars login form
+# with hidden inputs preserving client_id, redirect_uri, and state.
+# @name authorizeWithoutCookie
+GET {{baseUrl}}/auth/authorize?client_id={{clientId}}&redirect_uri={{redirectUri}}&state={{state}}&response_type=code
+
+# EXPECTED: HTTP/1.1 200 OK
+# Content-Type: text/html
+# HTML Login Form rendered with action="/auth/login"
+
+
+# -------------------------------------------------------------------
+# 5. Invalid / Expired Session: GET /auth/authorize -> 200 OK (Login View)
+# -------------------------------------------------------------------
+# When cookie contains an invalid or revoked token, gracefully fall back
+# to the login form instead of failing with 401.
+# @name authorizeWithInvalidCookie
+GET {{baseUrl}}/auth/authorize?client_id={{clientId}}&redirect_uri={{redirectUri}}&state={{state}}&response_type=code
+Cookie: techaxon_refresh_token=invalid.expired.fake.token
+
+# EXPECTED: HTTP/1.1 200 OK
+# Content-Type: text/html
+# HTML Login Form rendered
+
+
+# -------------------------------------------------------------------
+# 6. Security Check: Unregistered client_id -> 400 Bad Request
+# -------------------------------------------------------------------
+# Prevents unauthorized applications from initiating auth flows.
+# @name authorizeInvalidClient
+GET {{baseUrl}}/auth/authorize?client_id=unregistered-malicious-client&redirect_uri={{redirectUri}}&state={{state}}&response_type=code
+
+# EXPECTED: HTTP/1.1 400 Bad Request
+# {
+#   "message": "Invalid client_id or unauthorized redirect_uri",
+#   "error": "Bad Request",
+#   "statusCode": 400
+# }
+
+
+# -------------------------------------------------------------------
+# 7. Security Check: Open Redirect Protection (Unauthorized redirect_uri)
+# -------------------------------------------------------------------
+# Prevents authorization codes from being leaked to attacker domains.
+# @name authorizeUnauthorizedRedirectUri
+GET {{baseUrl}}/auth/authorize?client_id={{clientId}}&redirect_uri=https://attacker-phishing-site.com/steal-code&state={{state}}&response_type=code
+Cookie: techaxon_refresh_token={{refreshToken}}
+
+# EXPECTED: HTTP/1.1 400 Bad Request
+# {
+#   "message": "Invalid client_id or unauthorized redirect_uri",
+#   "error": "Bad Request",
+#   "statusCode": 400
+# }
