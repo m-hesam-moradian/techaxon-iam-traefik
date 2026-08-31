@@ -232,3 +232,150 @@ This document provides a highly detailed, step-by-step textual trace of every ba
 - **Path B: No Active Session (`userId` is null)**
   - Renders the Handlebars login template `login.hbs` with `clientId`, `redirectUri`, and `state` context so the user can enter credentials.
 
+---
+
+## 6. Pipeline: OIDC Token Exchange (`POST /auth/token`)
+
+This is **Step 8** of the OIDC Authorization Code Grant flow (RFC 6749 §4.1.3).
+After the browser receives the `?code=` redirect from `/authorize`, the client
+application (not the browser) sends that code to this endpoint to obtain real
+access and refresh tokens.
+
+### 6.0 Full Sequence Diagram
+
+```
+Browser          IAM (NestJS)           App (e.g. LMS)       CouchDB
+   │                   │                      │                  │
+   │── POST /login ───>│                      │                  │
+   │<── cookie + JWT ──│                      │                  │
+   │                   │                      │                  │
+   │── GET /authorize ─>│                     │                  │
+   │   (with cookie)   │── findByCode? ─────────────────────────>│
+   │                   │<── session valid ───────────────────────│
+   │                   │── saveAuthCode ─────────────────────────>│
+   │<── 302 ?code=abc ─│                      │                  │
+   │                   │                      │                  │
+   │── redirect ───────────────────────────>  │                  │
+   │                   │                      │                  │
+   │                   │   <── POST /auth/token ──────────────────│
+   │                   │      { code, client_id, redirect_uri }   │
+   │                   │── findByCode(code) ─────────────────────>│
+   │                   │<── authCodeDoc ─────────────────────────│
+   │                   │── markUsed(id, rev) ────────────────────>│
+   │                   │── createSession() ──────────────────────>│
+   │                   │── generateAccessToken()                  │
+   │                   │── generateRefreshToken()                 │
+   │                   │── { access_token, refresh_token } ──────>│
+```
+
+### 6.1 Request Entry & Validation
+
+- **Trigger:** The client application (not the user's browser) sends an HTTP
+  `POST` request to `/auth/token` after parsing the `?code=` from the redirect URL.
+- **Payload:** JSON body validated by `TokenExchangeDto`:
+
+  | Field | Type | Constraint |
+  |-------|------|-----------|
+  | `grant_type` | `string` | Must be `"authorization_code"` (`@IsIn`) |
+  | `code` | `string` | Non-empty (`@IsNotEmpty`) |
+  | `client_id` | `string` | Non-empty (`@IsNotEmpty`) |
+  | `redirect_uri` | `string` | Valid URL (`@IsUrl`) |
+
+- **No Auth Guard:** This endpoint is public. The code itself acts as the credential.
+
+### 6.2 Client & Redirect URI Verification
+
+- **Method:** `AuthService.validateClientRedirectUri(client_id, redirect_uri)`
+- **Executed first** — before any DB access — to reject invalid clients early.
+- Checks `client_id` exists in `clientsConfig` and that `redirect_uri` is
+  strictly present in the client's `allowedRedirectUris` array.
+- **Failure:** `HTTP 400 BadRequestException` — `"Invalid client_id or unauthorized redirect_uri"`.
+
+### 6.3 Authorization Code Lookup
+
+- **Method:** `AuthCodeRepository.findByCode(code)`
+- **CouchDB Mango Query:**
+  ```json
+  { "selector": { "type": "auth_code", "code": "<value>", "used": false } }
+  ```
+  The `used: false` constraint in the query means **already-used codes will not
+  be returned** — they appear as `null`, which is treated identically to a
+  non-existent code.
+- **Index:** Uses `idx_auth_code_lookup` (created in migration `005`).
+- **Failure:** `HTTP 401 UnauthorizedException` — `"Invalid or already used authorization code"`.
+
+### 6.4 Expiry Check
+
+- **Check:** `new Date(authCodeDoc.expiresAt) < new Date()`
+- **TTL:** Exactly 60 seconds from the moment the code was generated in `/authorize`.
+- **Enforced in application layer** (not via CouchDB TTL) so the error message
+  is explicit and logged.
+- **Failure:** `HTTP 401 UnauthorizedException` — `"Authorization code has expired"`.
+
+### 6.5 Client ID Binding Check
+
+- **Check:** `authCodeDoc.clientId !== dto.client_id`
+- Ensures that only the client application that initiated the authorization
+  request can redeem the code. Prevents one client from stealing another's code.
+- **Failure:** `HTTP 401 UnauthorizedException` — `"client_id does not match the authorization code"`.
+
+### 6.6 Atomic Code Consumption (Replay Attack Prevention)
+
+- **Method:** `AuthCodeRepository.markUsed(doc._id, doc._rev)`
+- **Executed BEFORE session creation.** If `markUsed` fails, no tokens are issued.
+- Updates the CouchDB document: `used: true`, `updatedAt: <now>`.
+- **CouchDB MVCC (Multi-Version Concurrency Control):**
+  Every CouchDB write requires the current `_rev`. If two requests race to
+  exchange the same code simultaneously:
+  - Request A: reads `_rev: '1-abc'` → writes successfully → doc becomes `_rev: '2-xyz'`
+  - Request B: tries to write with stale `_rev: '1-abc'` → CouchDB returns `409 Conflict`
+  - → Request B is rejected even under concurrent conditions.
+
+### 6.7 Session Creation
+
+- Follows the identical pattern as `login()`:
+
+  ```
+  sessionId        = `session:${randomUUID()}`
+  refreshToken     = tokenService.generateRefreshToken({ sub: userId, sid: sessionId, type: 'refresh' })
+  refreshTokenHash = await bcrypt.hash(refreshToken, 10)
+  expiresAt        = new Date(Date.now() + JWT_REFRESH_EXPIRES_IN_MS).toISOString()
+
+  await sessionService.createSession(userId, refreshTokenHash, expiresAt, sessionId)
+  ```
+
+- The raw `refreshToken` is **never stored** — only its bcrypt hash.
+
+### 6.8 Token Generation & Response
+
+- **Access Token:** Short-lived JWT signed with `JWT_ACCESS_SECRET`.
+  Payload: `{ sub: userId, sid: sessionId, type: 'access' }`.
+
+- **`expires_in` calculation:**
+  ```ts
+  const accessExpiresInSeconds =
+    (jwtConfig.access.expiresInMs ?? 15 * 60 * 1000) / 1000; // default: 900s
+  ```
+
+- **Response (RFC 6749 §5.1 compliant):**
+  ```json
+  {
+    "access_token":  "<short-lived JWT>",
+    "token_type":    "Bearer",
+    "expires_in":    900,
+    "refresh_token": "<long-lived JWT>"
+  }
+  ```
+
+### 6.9 Validation Order & Security Rationale
+
+```
+1. validateClientRedirectUri()   → 400  (reject unknown clients before any DB access)
+2. findByCode()                  → 401  (code not found or already used)
+3. expiresAt check               → 401  (60s TTL enforcement)
+4. clientId match                → 401  (binding: code belongs to this client only)
+5. markUsed()                    → (atomic consumption — before issuing anything)
+6. createSession()               → (new session in CouchDB)
+7. generateTokens()              → (access + refresh JWT pair)
+8. return tokens                 → 200
+```
