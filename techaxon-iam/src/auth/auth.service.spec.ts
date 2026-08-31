@@ -443,4 +443,121 @@ describe('AuthService', () => {
       expect(result).toBeNull();
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // exchangeAuthCode()
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe('exchangeAuthCode', () => {
+    const validDto = {
+      grant_type: 'authorization_code' as const,
+      code: 'valid-hex-auth-code',
+      client_id: 'test-client',
+      redirect_uri: 'https://app.example.com/callback',
+    };
+
+    const validAuthCodeDoc = {
+      _id: 'auth_code:abc-123',
+      _rev: '1-rev',
+      type: 'auth_code' as const,
+      code: 'valid-hex-auth-code',
+      userId: 'user:abc',
+      clientId: 'test-client',
+      expiresAt: new Date(Date.now() + 30_000).toISOString(), // 30s in future
+      used: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    it('should return OIDC-compliant tokens on valid code exchange', async () => {
+      mockAuthCodeRepository.findByCode.mockResolvedValue(validAuthCodeDoc);
+      mockAuthCodeRepository.markUsed.mockResolvedValue(undefined);
+      (sessionService.createSession as jest.Mock).mockResolvedValue(undefined);
+
+      const result = await authService.exchangeAuthCode(validDto);
+
+      expect(result).toEqual({
+        access_token: 'mock-access-token',
+        token_type: 'Bearer',
+        expires_in: expect.any(Number),
+        refresh_token: 'mock-refresh-token',
+      });
+      expect(authCodeRepo.markUsed).toHaveBeenCalledWith('auth_code:abc-123', '1-rev');
+      expect(sessionService.createSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throw UnauthorizedException when code is not found', async () => {
+      mockAuthCodeRepository.findByCode.mockResolvedValue(null);
+
+      await expect(authService.exchangeAuthCode(validDto)).rejects.toThrow(
+        'Invalid or already used authorization code',
+      );
+      expect(authCodeRepo.markUsed).not.toHaveBeenCalled();
+    });
+
+    it('should throw UnauthorizedException when code has expired', async () => {
+      mockAuthCodeRepository.findByCode.mockResolvedValue({
+        ...validAuthCodeDoc,
+        expiresAt: new Date(Date.now() - 1_000).toISOString(), // already expired
+      });
+
+      await expect(authService.exchangeAuthCode(validDto)).rejects.toThrow(
+        'Authorization code has expired',
+      );
+      expect(authCodeRepo.markUsed).not.toHaveBeenCalled();
+    });
+
+    it('should throw UnauthorizedException when client_id does not match the code', async () => {
+      mockAuthCodeRepository.findByCode.mockResolvedValue({
+        ...validAuthCodeDoc,
+        clientId: 'different-client', // mismatch
+      });
+
+      await expect(authService.exchangeAuthCode(validDto)).rejects.toThrow(
+        'client_id does not match the authorization code',
+      );
+      expect(authCodeRepo.markUsed).not.toHaveBeenCalled();
+    });
+
+    it('should throw BadRequestException when redirect_uri is not registered for client', async () => {
+      const dtoWithBadRedirect = {
+        ...validDto,
+        redirect_uri: 'https://attacker.com/steal',
+      };
+
+      await expect(authService.exchangeAuthCode(dtoWithBadRedirect)).rejects.toThrow(
+        'Invalid client_id or unauthorized redirect_uri',
+      );
+      expect(authCodeRepo.findByCode).not.toHaveBeenCalled();
+      expect(authCodeRepo.markUsed).not.toHaveBeenCalled();
+    });
+
+    it('should throw BadRequestException when client_id is not registered', async () => {
+      const dtoWithBadClient = {
+        ...validDto,
+        client_id: 'unregistered-client',
+      };
+
+      await expect(authService.exchangeAuthCode(dtoWithBadClient)).rejects.toThrow(
+        'Invalid client_id or unauthorized redirect_uri',
+      );
+      expect(authCodeRepo.findByCode).not.toHaveBeenCalled();
+    });
+
+    it('should call markUsed before creating session to prevent replay attacks', async () => {
+      const callOrder: string[] = [];
+
+      mockAuthCodeRepository.findByCode.mockResolvedValue(validAuthCodeDoc);
+      mockAuthCodeRepository.markUsed.mockImplementation(async () => {
+        callOrder.push('markUsed');
+      });
+      (sessionService.createSession as jest.Mock).mockImplementation(async () => {
+        callOrder.push('createSession');
+      });
+
+      await authService.exchangeAuthCode(validDto);
+
+      expect(callOrder).toEqual(['markUsed', 'createSession']);
+    });
+  });
 });

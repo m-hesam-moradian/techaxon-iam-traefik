@@ -25,6 +25,7 @@ import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { LogoutDto } from './dto/logout.dto';
 import { AuthorizeQueryDto } from './dto/authorize-query.dto';
+import { TokenExchangeDto } from './dto/token-exchange.dto';
 import { JwtAuthGuard, AuthenticatedUser } from './guards/jwt-auth.guard';
 
 @Controller('auth')
@@ -204,5 +205,23 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async logout(@Body() dto: LogoutDto) {
     return await this.authService.logout(dto.sessionId);
+  }
+
+  /**
+   * ------------------------------------------------------------------------
+   * OIDC Token Exchange
+   * POST /auth/token
+   *
+   * Exchanges a short-lived (60s) single-use authorization code (received
+   * from GET /auth/authorize via ?code=) for a real accessToken + refreshToken.
+   *
+   * This is Step 8 of the OIDC Authorization Code Grant flow (RFC 6749 §4.1.3).
+   * No authentication guard — the code itself is the credential.
+   * ------------------------------------------------------------------------
+   */
+  @Post('token')
+  @HttpCode(HttpStatus.OK)
+  async token(@Body() dto: TokenExchangeDto) {
+    return await this.authService.exchangeAuthCode(dto);
   }
 }

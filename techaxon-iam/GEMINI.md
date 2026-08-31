@@ -150,3 +150,17 @@
     branch or task, always run `git fetch upstream` and pull/rebase from
     `upstream/main` (`https://github.com/saeedhei/techaxon-iam`) to build on top
     of the latest code updates and prevent merge friction.
+
+## 11. Task Tracking (TODO.md — Local Only)
+
+35. **At the start of every new chat session**, always read `techaxon-iam/TODO.md`
+    and keep it up to date:
+    - If the user or Saeed mentions a new task → add it to `## ❌ Pending`.
+    - If code exists or a PR was merged for a pending item → move it to `## ✅ Done`.
+    - If the user reports something as finished → mark it done.
+    - Always write a short "What to do" section for each pending task so any
+      future agent or developer can continue without needing the chat history.
+
+36. **Never commit or push `TODO.md`** — it is listed in `.gitignore` and is
+    private local context only. Do not stage, commit, or push it under any
+    circumstances. It is a local-only file intentionally excluded from the public repo.
