@@ -4,6 +4,7 @@ import {
   Injectable,
   Inject,
   Optional,
+  BadRequestException,
   ConflictException,
   UnauthorizedException,
   InternalServerErrorException,
@@ -21,6 +22,7 @@ import clientsConfig from '../config/clients.config';
 
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { TokenExchangeDto } from './dto/token-exchange.dto';
 import type { JwtPayload } from './interfaces/jwt-payload.interface';
 
 @Injectable()
@@ -398,5 +400,97 @@ export class AuthService {
     }
 
     return payload.sub;
+  }
+
+  /**
+   * ------------------------------------------------------------------------
+   * Exchange Authorization Code for Tokens (OIDC Token Endpoint)
+   * ------------------------------------------------------------------------
+   *
+   * Validates the short-lived authorization code issued by /authorize and,
+   * if valid, issues a new accessToken + refreshToken pair for the user.
+   *
+   * Validations (RFC 6749 §4.1.3):
+   *  1. grant_type === 'authorization_code'  (enforced by DTO)
+   *  2. code exists, is unused, and has not expired (60s TTL)
+   *  3. client_id matches the clientId stored with the code
+   *  4. redirect_uri is registered for the client
+   *  5. code is atomically marked used before tokens are issued
+   */
+  async exchangeAuthCode(dto: TokenExchangeDto): Promise<{
+    access_token: string;
+    token_type: 'Bearer';
+    expires_in: number;
+    refresh_token: string;
+  }> {
+    // 1. Validate redirect_uri against registered client
+    const isClientValid = await this.validateClientRedirectUri(
+      dto.client_id,
+      dto.redirect_uri,
+    );
+    if (!isClientValid) {
+      throw new BadRequestException('Invalid client_id or unauthorized redirect_uri');
+    }
+
+    // 2. Look up the auth code document
+    const authCodeDoc = await this.authCodeRepo.findByCode(dto.code);
+
+    if (!authCodeDoc) {
+      throw new UnauthorizedException('Invalid or already used authorization code');
+    }
+
+    // 3. Verify the code has not expired (60s TTL)
+    if (new Date(authCodeDoc.expiresAt) < new Date()) {
+      throw new UnauthorizedException('Authorization code has expired');
+    }
+
+    // 4. Verify client_id matches the one stored with the code
+    if (authCodeDoc.clientId !== dto.client_id) {
+      throw new UnauthorizedException('client_id does not match the authorization code');
+    }
+
+    // 5. Atomically mark the code as used — prevents replay attacks
+    await this.authCodeRepo.markUsed(authCodeDoc._id, authCodeDoc._rev ?? '');
+
+    const userId = authCodeDoc.userId;
+
+    // 6. Create a new session (same pattern as login)
+    const refreshExpiresInMs = this.getRefreshTokenExpiresInMs();
+    const expiresAt = new Date(Date.now() + refreshExpiresInMs).toISOString();
+    const sessionId = `session:${randomUUID()}`;
+
+    const refreshToken = this.tokenService.generateRefreshToken({
+      sub: userId,
+      sid: sessionId,
+      type: 'refresh',
+    });
+
+    const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+
+    await this.sessionService.createSession(
+      userId,
+      refreshTokenHash,
+      expiresAt,
+      sessionId,
+    );
+
+    // 7. Generate access token
+    const accessToken = this.tokenService.generateAccessToken({
+      sub: userId,
+      sid: sessionId,
+      type: 'access',
+    });
+
+    // Access token TTL in seconds (default 15 minutes)
+    const accessExpiresInSeconds =
+      (this.jwtConfiguration?.access?.expiresInMs ?? 15 * 60 * 1000) / 1000;
+
+    // 8. Return OIDC-compliant token response (RFC 6749 §5.1)
+    return {
+      access_token: accessToken,
+      token_type: 'Bearer',
+      expires_in: accessExpiresInSeconds,
+      refresh_token: refreshToken,
+    };
   }
 }

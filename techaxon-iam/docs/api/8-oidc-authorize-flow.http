@@ -118,3 +118,56 @@ Cookie: techaxon_refresh_token={{refreshToken}}
 #   "error": "Bad Request",
 #   "statusCode": 400
 # }
+
+
+# -------------------------------------------------------------------
+# 8. Token Exchange: POST /auth/token -> 200 OK (accessToken + refreshToken)
+# -------------------------------------------------------------------
+# After /authorize redirects back with ?code=<value>, the client app
+# sends that code here to receive real tokens.
+# Uses the auth code captured in step 2 (authorizeWithValidSession).
+# @name tokenExchange
+POST {{baseUrl}}/auth/token
+Content-Type: application/json
+
+{
+  "grant_type": "authorization_code",
+  "code": "{{authorizeWithValidSession.response.headers.location}}",
+  "client_id": "{{clientId}}",
+  "redirect_uri": "{{redirectUri}}"
+}
+
+# EXPECTED: HTTP/1.1 200 OK
+# {
+#   "access_token": "<jwt>",
+#   "token_type": "Bearer",
+#   "expires_in": 900,
+#   "refresh_token": "<jwt>"
+# }
+
+### TIP: In practice, the frontend parses ?code= from the Location header
+### redirect and sends it here. The code expires in 60 seconds.
+
+
+# -------------------------------------------------------------------
+# 9. Security: Replay Attack — Reuse same code -> 401 Unauthorized
+# -------------------------------------------------------------------
+# Attempting to exchange the same code a second time must fail.
+# markUsed() was called in step 8, so findByCode returns null now.
+# @name tokenReplayAttack
+POST {{baseUrl}}/auth/token
+Content-Type: application/json
+
+{
+  "grant_type": "authorization_code",
+  "code": "{{authorizeWithValidSession.response.headers.location}}",
+  "client_id": "{{clientId}}",
+  "redirect_uri": "{{redirectUri}}"
+}
+
+# EXPECTED: HTTP/1.1 401 Unauthorized
+# {
+#   "message": "Invalid or already used authorization code",
+#   "error": "Unauthorized",
+#   "statusCode": 401
+# }

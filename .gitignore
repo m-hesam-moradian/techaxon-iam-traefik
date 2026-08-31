@@ -42,3 +42,10 @@ Thumbs.db
 # Test coverage
 coverage/
 .nyc_output/
+
+# Private local task tracking (not for public repo)
+TODO.md
+**/TODO.md
+
+# AI agent config (local only)
+.agents/
