@@ -49,6 +49,7 @@ export default registerAs('jwt', () => {
     access: {
       secret: process.env.JWT_ACCESS_SECRET!,
       expiresIn: (process.env.JWT_ACCESS_EXPIRES_IN || '15m') as Duration,
+      expiresInMs: parseDurationToMs(process.env.JWT_ACCESS_EXPIRES_IN || '15m', 15 * 60 * 1000),
     },
 
     refresh: {
