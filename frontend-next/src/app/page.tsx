@@ -1,7 +1,9 @@
-﻿"use client";
+"use client";
 
 import { useState, useEffect } from "react";
 import { useAuth, REGISTERED_CLIENTS } from "@/context/auth-context";
+import { MfaSetupModal } from "@/components/mfa-setup-modal";
+import { MfaDisableModal } from "@/components/mfa-disable-modal";
 
 export default function Home() {
   const {
@@ -26,6 +28,8 @@ export default function Home() {
   const [apiLoading, setApiLoading] = useState<boolean>(false);
   const [secondsRemaining, setSecondsRemaining] = useState<number | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [isMfaSetupOpen, setIsMfaSetupOpen] = useState<boolean>(false);
+  const [isMfaDisableOpen, setIsMfaDisableOpen] = useState<boolean>(false);
 
   // Live token countdown timer
   useEffect(() => {
@@ -461,9 +465,83 @@ export default function Home() {
                 </div>
               )}
             </div>
+
+            {/* Two-Factor Authentication (2FA / MFA) Management Card */}
+            <div className="rounded-2xl border border-zinc-200/80 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900 shadow-sm">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${
+                    user.mfaEnabled
+                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                      : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                  }`}>
+                    <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-bold text-zinc-900 dark:text-zinc-100">
+                        Two-Factor Authentication (TOTP)
+                      </h3>
+                      {user.mfaEnabled ? (
+                        <span className="rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 px-2.5 py-0.5 text-xs font-semibold">
+                          🛡️ Active
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 dark:border-amber-800 px-2.5 py-0.5 text-xs font-semibold">
+                          Disabled
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                      {user.mfaEnabled
+                        ? "Your account is secured with Time-based One-Time Passwords (RFC 6238) and 8 recovery backup codes."
+                        : "Protect your account by requiring an authenticator app code during sign-in."}
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  {user.mfaEnabled ? (
+                    <button
+                      onClick={() => setIsMfaDisableOpen(true)}
+                      className="rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/30 px-4 py-2 text-xs font-semibold text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/50 transition"
+                    >
+                      Disable 2FA
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setIsMfaSetupOpen(true)}
+                      className="rounded-xl bg-indigo-600 hover:bg-indigo-700 px-4 py-2 text-xs font-semibold text-white shadow-md transition"
+                    >
+                      ⚡ Set Up 2FA Now
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </main>
+
+      {/* MFA Setup Modal */}
+      <MfaSetupModal
+        isOpen={isMfaSetupOpen}
+        onClose={() => setIsMfaSetupOpen(false)}
+        onSuccess={() => {
+          fetchUserProfile();
+        }}
+      />
+
+      {/* MFA Disable Modal */}
+      <MfaDisableModal
+        isOpen={isMfaDisableOpen}
+        onClose={() => setIsMfaDisableOpen(false)}
+        onSuccess={() => {
+          fetchUserProfile();
+        }}
+      />
     </div>
   );
 }
