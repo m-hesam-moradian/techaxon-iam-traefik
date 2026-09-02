@@ -17,12 +17,16 @@ import { UserRepository } from '../users/user.repository';
 import { SessionService } from '../sessions/session.service';
 import { TokenService } from './token.service';
 import { AuthCodeRepository } from './auth-code.repository';
+import { MfaService } from './mfa.service';
 import jwtConfig from '../config/jwt.config';
 import clientsConfig from '../config/clients.config';
 
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { TokenExchangeDto } from './dto/token-exchange.dto';
+import { MfaEnableDto } from './dto/mfa-enable.dto';
+import { MfaDisableDto } from './dto/mfa-disable.dto';
+import { MfaAuthenticateDto } from './dto/mfa-authenticate.dto';
 import type { JwtPayload } from './interfaces/jwt-payload.interface';
 
 @Injectable()
@@ -32,6 +36,7 @@ export class AuthService {
     private readonly sessionService: SessionService,
     private readonly tokenService: TokenService,
     private readonly authCodeRepo: AuthCodeRepository,
+    private readonly mfaService: MfaService,
     @Optional()
     @Inject(jwtConfig.KEY)
     private readonly jwtConfiguration?: ConfigType<typeof jwtConfig>,
@@ -139,24 +144,38 @@ export class AuthService {
 
     const userId: string = user._id;
 
-    // 4. Set expiration for the refresh token & session (dynamically aligned with JWT_REFRESH_EXPIRES_IN)
+    // 4. Check if Multi-Factor Authentication (MFA) is enabled for this account
+    if (user.mfa?.enabled) {
+      const mfaToken = this.tokenService.generateMfaChallengeToken(userId);
+      return {
+        mfaRequired: true,
+        mfaToken,
+        user: {
+          id: userId,
+          email: user.email,
+          username: user.username,
+        },
+      };
+    }
+
+    // 5. Set expiration for the refresh token & session (dynamically aligned with JWT_REFRESH_EXPIRES_IN)
     const refreshExpiresInMs = this.getRefreshTokenExpiresInMs();
     const expiresAt = new Date(Date.now() + refreshExpiresInMs).toISOString();
 
-    // 5. Generate FIXED Session ID upfront (یکبار برای همیشه)
+    // 6. Generate FIXED Session ID upfront (یکبار برای همیشه)
     const sessionId = `session:${randomUUID()}`;
 
-    // 6. Generate Refresh Token using the EXACT sessionId
+    // 7. Generate Refresh Token using the EXACT sessionId
     const refreshToken = this.tokenService.generateRefreshToken({
       sub: userId,
       sid: sessionId,
       type: 'refresh',
     });
 
-    // 7. Hash the exact Refresh Token that will be returned to the client
+    // 8. Hash the exact Refresh Token that will be returned to the client
     const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
 
-    // 8. Create session in DB with the predetermined sessionId
+    // 9. Create session in DB with the predetermined sessionId
     await this.sessionService.createSession(
       userId,
       refreshTokenHash,
@@ -164,7 +183,7 @@ export class AuthService {
       sessionId, // 👈 پاس دادن sessionId قطعی به SessionService
     );
 
-    // 9. Generate Access Token
+    // 10. Generate Access Token
     const accessToken = this.tokenService.generateAccessToken({
       sub: userId,
       sid: sessionId,
@@ -172,6 +191,7 @@ export class AuthService {
     });
 
     return {
+      mfaRequired: false,
       accessToken,
       refreshToken,
       user: {
@@ -491,6 +511,220 @@ export class AuthService {
       token_type: 'Bearer',
       expires_in: accessExpiresInSeconds,
       refresh_token: refreshToken,
+    };
+  }
+
+  // =========================================================================
+  // Multi-Factor Authentication (MFA / 2FA) Methods
+  // =========================================================================
+
+  /**
+   * ------------------------------------------------------------------------
+   * MFA Setup (Step 1 of Enrolment)
+   * ------------------------------------------------------------------------
+   *
+   * Generates a new Base32 secret and standard otpauth:// URI.
+   * MFA is not enabled on the user account until mfaEnable() verifies a code.
+   */
+  async mfaSetup(userId: string): Promise<{ secret: string; keyUri: string }> {
+    const user = await this.userRepo.findById(userId);
+    if (!user || user.status !== 'active') {
+      throw new UnauthorizedException('User not found or account is not active');
+    }
+
+    const secret = this.mfaService.generateSecret();
+    const keyUri = this.mfaService.generateKeyUri(user.email, secret);
+
+    return { secret, keyUri };
+  }
+
+  /**
+   * ------------------------------------------------------------------------
+   * MFA Enable (Step 2 of Enrolment)
+   * ------------------------------------------------------------------------
+   *
+   * Verifies the user's initial 6-digit TOTP code against the generated secret.
+   * On success:
+   *  1. Encrypts the secret with AES-256-GCM before saving to database.
+   *  2. Generates 8 one-time backup recovery codes and saves their bcrypt hashes.
+   *  3. Sets user.mfa.enabled = true.
+   *  4. Returns the plaintext backup codes to the user (one-time display).
+   */
+  async mfaEnable(
+    userId: string,
+    dto: MfaEnableDto,
+  ): Promise<{ success: true; message: string; backupCodes: string[] }> {
+    const user = await this.userRepo.findById(userId);
+    if (!user || user.status !== 'active') {
+      throw new UnauthorizedException('User not found or account is not active');
+    }
+
+    const isTotpValid = this.mfaService.verifyTotp(dto.code, dto.secret);
+    if (!isTotpValid) {
+      throw new BadRequestException('Invalid verification code. Please check your authenticator app.');
+    }
+
+    // Encrypt Base32 secret with AES-256-GCM
+    const encryptedSecret = this.mfaService.encryptSecret(dto.secret);
+
+    // Generate 8 single-use backup recovery codes
+    const backupCodes = this.mfaService.generateBackupCodes(8);
+    const hashedBackupCodes = await this.mfaService.hashBackupCodes(backupCodes);
+
+    user.mfa = {
+      enabled: true,
+      secret: encryptedSecret,
+      backupCodes: hashedBackupCodes,
+      enrolledAt: new Date().toISOString(),
+    };
+
+    user.updatedAt = new Date().toISOString();
+    await this.userRepo.updateUser(userId, user);
+
+    return {
+      success: true,
+      message: 'Two-factor authentication successfully enabled',
+      backupCodes,
+    };
+  }
+
+  /**
+   * ------------------------------------------------------------------------
+   * MFA Disable
+   * ------------------------------------------------------------------------
+   *
+   * Disables MFA for the user. Requires current password + valid TOTP code
+   * to prevent unauthorized deactivations.
+   */
+  async mfaDisable(
+    userId: string,
+    dto: MfaDisableDto,
+  ): Promise<{ success: true; message: string }> {
+    const user = await this.userRepo.findById(userId);
+    if (!user || user.status !== 'active') {
+      throw new UnauthorizedException('User not found or account is not active');
+    }
+
+    // 1. Re-verify account password
+    const isPasswordValid = await bcrypt.compare(dto.password, user.passwordHash);
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Invalid password');
+    }
+
+    if (!user.mfa || !user.mfa.enabled) {
+      return { success: true, message: 'MFA is not enabled on this account' };
+    }
+
+    // 2. Verify TOTP code against decrypted secret
+    const decryptedSecret = this.mfaService.decryptSecret(user.mfa.secret);
+    const isTotpValid = this.mfaService.verifyTotp(dto.code, decryptedSecret);
+    if (!isTotpValid) {
+      throw new BadRequestException('Invalid MFA code');
+    }
+
+    // 3. Remove MFA configuration
+    delete user.mfa;
+    user.updatedAt = new Date().toISOString();
+    await this.userRepo.updateUser(userId, user);
+
+    return { success: true, message: 'Two-factor authentication successfully disabled' };
+  }
+
+  /**
+   * ------------------------------------------------------------------------
+   * MFA Authenticate (Step 2 of Login Challenge)
+   * ------------------------------------------------------------------------
+   *
+   * Exchanges an mfa_token challenge JWT + 6-digit TOTP code (or backup code)
+   * for full access and refresh tokens.
+   */
+  async mfaAuthenticate(
+    dto: MfaAuthenticateDto,
+    meta?: { userAgent?: string; ipAddress?: string },
+  ) {
+    // 1. Verify the short-lived challenge token
+    const payload = await this.tokenService.verifyMfaChallengeToken(dto.mfa_token);
+    const userId = payload.sub;
+
+    const user = await this.userRepo.findById(userId);
+    if (!user || user.status !== 'active') {
+      throw new UnauthorizedException('User not found or account is not active');
+    }
+
+    if (!user.mfa || !user.mfa.enabled) {
+      throw new BadRequestException('MFA is not enabled for this user');
+    }
+
+    // 2. Validate TOTP code OR single-use Backup Code
+    let codeValidated = false;
+
+    if (dto.code) {
+      const decryptedSecret = this.mfaService.decryptSecret(user.mfa.secret);
+      const isTotpValid = this.mfaService.verifyTotp(dto.code, decryptedSecret);
+      if (!isTotpValid) {
+        throw new UnauthorizedException('Invalid MFA verification code');
+      }
+      codeValidated = true;
+    } else if (dto.backup_code) {
+      const matchingIndex = await this.mfaService.verifyBackupCode(
+        dto.backup_code,
+        user.mfa.backupCodes,
+      );
+
+      if (matchingIndex === -1) {
+        throw new UnauthorizedException('Invalid or already used backup code');
+      }
+
+      // Consume the backup code (single-use enforcement)
+      user.mfa.backupCodes.splice(matchingIndex, 1);
+      codeValidated = true;
+    } else {
+      throw new BadRequestException('Either code or backup_code must be provided');
+    }
+
+    if (!codeValidated) {
+      throw new UnauthorizedException('MFA verification failed');
+    }
+
+    // 3. Update lastUsedAt timestamp and save changes (if backup code was consumed)
+    user.mfa.lastUsedAt = new Date().toISOString();
+    user.updatedAt = new Date().toISOString();
+    await this.userRepo.updateUser(userId, user);
+
+    // 4. Create Session in CouchDB and generate tokens
+    const refreshExpiresInMs = this.getRefreshTokenExpiresInMs();
+    const expiresAt = new Date(Date.now() + refreshExpiresInMs).toISOString();
+    const sessionId = `session:${randomUUID()}`;
+
+    const refreshToken = this.tokenService.generateRefreshToken({
+      sub: userId,
+      sid: sessionId,
+      type: 'refresh',
+    });
+
+    const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+
+    await this.sessionService.createSession(
+      userId,
+      refreshTokenHash,
+      expiresAt,
+      sessionId,
+    );
+
+    const accessToken = this.tokenService.generateAccessToken({
+      sub: userId,
+      sid: sessionId,
+      type: 'access',
+    });
+
+    return {
+      accessToken,
+      refreshToken,
+      user: {
+        id: userId,
+        email: user.email,
+        username: user.username,
+      },
     };
   }
 }

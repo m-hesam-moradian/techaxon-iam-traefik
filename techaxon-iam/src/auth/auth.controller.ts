@@ -26,6 +26,9 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { LogoutDto } from './dto/logout.dto';
 import { AuthorizeQueryDto } from './dto/authorize-query.dto';
 import { TokenExchangeDto } from './dto/token-exchange.dto';
+import { MfaEnableDto } from './dto/mfa-enable.dto';
+import { MfaDisableDto } from './dto/mfa-disable.dto';
+import { MfaAuthenticateDto } from './dto/mfa-authenticate.dto';
 import { JwtAuthGuard, AuthenticatedUser } from './guards/jwt-auth.guard';
 
 @Controller('auth')
@@ -83,6 +86,19 @@ export class AuthController {
 
     const result = await this.authService.login(dto, { userAgent, ipAddress });
 
+    // If MFA is required, return challenge token without setting session cookie
+    if (result.mfaRequired || !result.refreshToken) {
+      return result;
+    }
+
+    this.setRefreshTokenCookie(res, result.refreshToken);
+    return result;
+  }
+
+  /**
+   * Helper to set the SSO refresh token HttpOnly cookie.
+   */
+  private setRefreshTokenCookie(res: Response, refreshToken: string): void {
     const refreshExpiresInMs = this.authService.getRefreshTokenExpiresInMs();
     const domain =
       this.cookieConfiguration?.domain ?? process.env.COOKIE_DOMAIN ?? '.techaxon.localhost';
@@ -91,17 +107,7 @@ export class AuthController {
     const httpOnly = this.cookieConfiguration?.httpOnly ?? true;
     const path = this.cookieConfiguration?.path ?? '/';
 
-    /**
-     * Set the SSO refresh token cookie.
-     *
-     * httpOnly    : blocks client-side JS access (XSS protection).
-     * secure      : HTTPS-only in production.
-     * sameSite    : 'lax' — CSRF protection while allowing top-level navigations.
-     * domain      : shared across subdomains for SSO (e.g. .techaxon.localhost).
-     * path        : '/' — available for all routes on the domain.
-     * maxAge      : dynamic duration matching JWT_REFRESH_EXPIRES_IN (e.g. 30d).
-     */
-    res.cookie('techaxon_refresh_token', result.refreshToken, {
+    res.cookie('techaxon_refresh_token', refreshToken, {
       httpOnly,
       secure,
       sameSite,
@@ -109,8 +115,6 @@ export class AuthController {
       path,
       maxAge: refreshExpiresInMs,
     });
-
-    return result;
   }
 
   /**
@@ -223,5 +227,87 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async token(@Body() dto: TokenExchangeDto) {
     return await this.authService.exchangeAuthCode(dto);
+  }
+
+  // =========================================================================
+  // Multi-Factor Authentication (MFA / 2FA) Endpoints
+  // =========================================================================
+
+  /**
+   * ------------------------------------------------------------------------
+   * MFA Setup (Step 1 of Enrolment)
+   * POST /auth/mfa/setup
+   *
+   * Authenticated endpoint. Generates a new TOTP Base32 secret and key URI.
+   * ------------------------------------------------------------------------
+   */
+  @Post('mfa/setup')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async mfaSetup(@Req() req: Request & { user: AuthenticatedUser }) {
+    return await this.authService.mfaSetup(req.user.id);
+  }
+
+  /**
+   * ------------------------------------------------------------------------
+   * MFA Enable (Step 2 of Enrolment)
+   * POST /auth/mfa/enable
+   *
+   * Authenticated endpoint. Verifies initial 6-digit TOTP code, encrypts
+   * the secret, activates MFA, and returns 8 single-use backup recovery codes.
+   * ------------------------------------------------------------------------
+   */
+  @Post('mfa/enable')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async mfaEnable(
+    @Req() req: Request & { user: AuthenticatedUser },
+    @Body() dto: MfaEnableDto,
+  ) {
+    return await this.authService.mfaEnable(req.user.id, dto);
+  }
+
+  /**
+   * ------------------------------------------------------------------------
+   * MFA Disable
+   * POST /auth/mfa/disable
+   *
+   * Authenticated endpoint. Deactivates MFA after verifying current password
+   * and a valid 6-digit TOTP code.
+   * ------------------------------------------------------------------------
+   */
+  @Post('mfa/disable')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async mfaDisable(
+    @Req() req: Request & { user: AuthenticatedUser },
+    @Body() dto: MfaDisableDto,
+  ) {
+    return await this.authService.mfaDisable(req.user.id, dto);
+  }
+
+  /**
+   * ------------------------------------------------------------------------
+   * MFA Authenticate (Step 2 of Login Challenge)
+   * POST /auth/mfa/authenticate
+   *
+   * Public challenge endpoint. Exchanges mfa_token + 6-digit TOTP code
+   * (or single-use backup code) for access/refresh tokens and sets SSO cookie.
+   * ------------------------------------------------------------------------
+   */
+  @Post('mfa/authenticate')
+  @HttpCode(HttpStatus.OK)
+  async mfaAuthenticate(
+    @Body() dto: MfaAuthenticateDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const userAgent = req.headers['user-agent'];
+    const ipAddress = req.ip ?? req.socket.remoteAddress;
+
+    const result = await this.authService.mfaAuthenticate(dto, { userAgent, ipAddress });
+    this.setRefreshTokenCookie(res, result.refreshToken);
+
+    return result;
   }
 }
