@@ -6,6 +6,7 @@ export interface UserProfile {
   id: string;
   username: string;
   email?: string;
+  mfaEnabled?: boolean;
 }
 
 export interface TokenResponse {
@@ -33,6 +34,12 @@ interface AuthContextType {
   fetchUserProfile: (token?: string) => Promise<UserProfile | null>;
   logout: () => Promise<void>;
   clearError: () => void;
+
+  // ─── MFA Methods ───
+  setupMfa: () => Promise<{ secret: string; keyUri: string } | null>;
+  enableMfa: (code: string, secret: string) => Promise<{ success: boolean; backupCodes?: string[]; error?: string }>;
+  disableMfa: (password: string, code: string) => Promise<{ success: boolean; error?: string }>;
+  authenticateMfa: (mfaToken: string, code?: string, backupCode?: string) => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -94,7 +101,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (!res.ok) {
           if (res.status === 401) {
-            // Token expired or invalid
             setUser(null);
           }
           return null;
@@ -105,6 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           id: data.id || data.userId || data.sub,
           username: data.username || "User",
           email: data.email,
+          mfaEnabled: Boolean(data.mfa?.enabled || data.mfaEnabled),
         };
         setUser(profile);
         localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(profile));
@@ -144,7 +151,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(JSON.parse(savedUser));
         }
 
-        // Verify token with backend
         fetchUserProfile(savedAccessToken);
       }
     } catch (e) {
@@ -220,10 +226,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refresh_token);
       localStorage.setItem(STORAGE_KEYS.EXPIRES_AT, expiresAtTimestamp.toString());
 
-      // Fetch user profile immediately
       await fetchUserProfile(data.access_token);
-
-      // Clean up session storage
       sessionStorage.removeItem(STORAGE_KEYS.OIDC_STATE);
 
       return true;
@@ -260,7 +263,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const data = await res.json();
       const newAccessToken = data.accessToken || data.access_token;
-      const expiresAtTimestamp = Date.now() + 15 * 60 * 1000; // default 15m
+      const expiresAtTimestamp = Date.now() + 15 * 60 * 1000;
 
       setAccessToken(newAccessToken);
       setTokenExpiresAt(expiresAtTimestamp);
@@ -272,9 +275,162 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Token refresh failed";
       setError(msg);
-      // Auto logout on refresh failure
       await logout();
       return false;
+    }
+  };
+
+  // ─── MFA API Implementations ───
+
+  const setupMfa = async (): Promise<{ secret: string; keyUri: string } | null> => {
+    if (!accessToken) return null;
+    setError(null);
+
+    try {
+      const res = await fetch(`${iamBaseUrl}/auth/mfa/setup`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || "Failed to initialize 2FA setup");
+      }
+
+      return await res.json();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "2FA setup failed";
+      setError(msg);
+      return null;
+    }
+  };
+
+  const enableMfa = async (
+    code: string,
+    secret: string
+  ): Promise<{ success: boolean; backupCodes?: string[]; error?: string }> => {
+    if (!accessToken) return { success: false, error: "Not authenticated" };
+    setError(null);
+
+    try {
+      const res = await fetch(`${iamBaseUrl}/auth/mfa/enable`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ code, secret }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: data.message || "Invalid 2FA code" };
+      }
+
+      if (user) {
+        setUser({ ...user, mfaEnabled: true });
+      }
+
+      return { success: true, backupCodes: data.backupCodes };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to enable 2FA";
+      return { success: false, error: msg };
+    }
+  };
+
+  const disableMfa = async (
+    password: string,
+    code: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!accessToken) return { success: false, error: "Not authenticated" };
+    setError(null);
+
+    try {
+      const res = await fetch(`${iamBaseUrl}/auth/mfa/disable`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ password, code }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        return { success: false, error: data.message || "Failed to disable 2FA" };
+      }
+
+      if (user) {
+        setUser({ ...user, mfaEnabled: false });
+      }
+
+      return { success: true };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to disable 2FA";
+      return { success: false, error: msg };
+    }
+  };
+
+  const authenticateMfa = async (
+    mfaToken: string,
+    code?: string,
+    backupCode?: string
+  ): Promise<boolean> => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const res = await fetch(`${iamBaseUrl}/auth/mfa/authenticate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          mfa_token: mfaToken,
+          code: code || undefined,
+          backup_code: backupCode || undefined,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || "MFA verification failed");
+      }
+
+      const data = await res.json();
+      const expiresAtTimestamp = Date.now() + 15 * 60 * 1000;
+
+      setAccessToken(data.accessToken);
+      setRefreshToken(data.refreshToken);
+      setTokenExpiresAt(expiresAtTimestamp);
+
+      localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.accessToken);
+      localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refreshToken);
+      localStorage.setItem(STORAGE_KEYS.EXPIRES_AT, expiresAtTimestamp.toString());
+
+      if (data.user) {
+        const profile: UserProfile = {
+          id: data.user.id,
+          username: data.user.username,
+          email: data.user.email,
+          mfaEnabled: true,
+        };
+        setUser(profile);
+        localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(profile));
+      } else {
+        await fetchUserProfile(data.accessToken);
+      }
+
+      return true;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "2FA verification failed";
+      setError(msg);
+      return false;
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -324,6 +480,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         fetchUserProfile,
         logout,
         clearError,
+        setupMfa,
+        enableMfa,
+        disableMfa,
+        authenticateMfa,
       }}
     >
       {children}
