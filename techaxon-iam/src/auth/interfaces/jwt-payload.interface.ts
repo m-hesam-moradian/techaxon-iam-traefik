@@ -25,7 +25,7 @@ export interface JwtPayload {
   /**
    * Token type.
    */
-  type: 'access' | 'refresh' | 'verification';
+  type: 'access' | 'refresh' | 'verification' | 'mfa_challenge';
 }
 
 // sub  → پیدا کردن کاربر

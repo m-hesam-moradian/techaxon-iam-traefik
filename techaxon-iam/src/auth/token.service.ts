@@ -55,6 +55,24 @@ export class TokenService {
     });
   }
 
+  /**
+   * Generates a short-lived (5m) MFA login challenge token.
+   */
+  generateMfaChallengeToken(userId: string): string {
+    const payload: JwtPayload = {
+      sub: userId,
+      sid: '',
+      type: 'mfa_challenge',
+    };
+
+    return this.jwtService.sign(payload, {
+      secret: this.config.access.secret,
+      expiresIn: '5m',
+      issuer: this.config.issuer,
+      audience: this.config.audience,
+    });
+  }
+
   // ==========================================
   // TOKEN VERIFICATION METHODS
   // ==========================================
@@ -119,6 +137,27 @@ export class TokenService {
       return payload;
     } catch {
       throw new UnauthorizedException('Invalid or expired verification token');
+    }
+  }
+
+  /**
+   * Verifies an MFA challenge token and returns its decoded payload.
+   */
+  async verifyMfaChallengeToken(token: string): Promise<JwtPayload> {
+    try {
+      const payload = await this.jwtService.verifyAsync<JwtPayload>(token, {
+        secret: this.config.access.secret,
+        issuer: this.config.issuer,
+        audience: this.config.audience,
+      });
+
+      if (payload.type !== 'mfa_challenge' || !payload.sub) {
+        throw new UnauthorizedException('Invalid MFA challenge token type');
+      }
+
+      return payload;
+    } catch {
+      throw new UnauthorizedException('Invalid or expired MFA challenge token');
     }
   }
 }

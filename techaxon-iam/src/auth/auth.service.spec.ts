@@ -12,6 +12,7 @@ import { UserRepository } from '../users/user.repository';
 import { SessionService } from '../sessions/session.service';
 import { TokenService } from './token.service';
 import { AuthCodeRepository } from './auth-code.repository';
+import { MfaService } from './mfa.service';
 import jwtConfig from '../config/jwt.config';
 import clientsConfig from '../config/clients.config';
 
@@ -21,6 +22,7 @@ describe('AuthService', () => {
   let authCodeRepo: AuthCodeRepository;
   let sessionService: SessionService;
   let tokenService: TokenService;
+  let mfaService: MfaService;
 
   const mockUserRepository = {
     findByEmail: jest.fn(),
@@ -35,6 +37,19 @@ describe('AuthService', () => {
     saveAuthCode: jest.fn(),
     findByCode: jest.fn(),
     markUsed: jest.fn(),
+  };
+
+  const mockMfaService = {
+    generateSecret: jest.fn().mockReturnValue('MOCKBASE32SECRET234567MOCKSECRET'),
+    generateKeyUri: jest
+      .fn()
+      .mockReturnValue('otpauth://totp/TechAxon:user@example.com?secret=MOCKBASE32SECRET'),
+    verifyTotp: jest.fn(),
+    encryptSecret: jest.fn().mockReturnValue('iv:tag:encryptedSecret'),
+    decryptSecret: jest.fn().mockReturnValue('MOCKBASE32SECRET234567MOCKSECRET'),
+    generateBackupCodes: jest.fn().mockReturnValue(['code-1111', 'code-2222', 'code-3333']),
+    hashBackupCodes: jest.fn().mockResolvedValue(['hash-1111', 'hash-2222', 'hash-3333']),
+    verifyBackupCode: jest.fn(),
   };
 
   const mockJwtConfig = {
@@ -65,9 +80,11 @@ describe('AuthService', () => {
       generateAccessToken: jest.fn().mockReturnValue('mock-access-token'),
       generateRefreshToken: jest.fn().mockReturnValue('mock-refresh-token'),
       generateVerificationToken: jest.fn().mockReturnValue('mock-verification-token'),
+      generateMfaChallengeToken: jest.fn().mockReturnValue('mock-mfa-challenge-token'),
       verifyAccessToken: jest.fn(),
       verifyRefreshToken: jest.fn(),
       verifyVerificationToken: jest.fn(),
+      verifyMfaChallengeToken: jest.fn(),
     };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -89,6 +106,10 @@ describe('AuthService', () => {
           useValue: mockAuthCodeRepository,
         },
         {
+          provide: MfaService,
+          useValue: mockMfaService,
+        },
+        {
           provide: jwtConfig.KEY,
           useValue: mockJwtConfig,
         },
@@ -104,6 +125,7 @@ describe('AuthService', () => {
     authCodeRepo = module.get<AuthCodeRepository>(AuthCodeRepository);
     sessionService = module.get<SessionService>(SessionService);
     tokenService = module.get<TokenService>(TokenService);
+    mfaService = module.get<MfaService>(MfaService);
   });
 
   afterEach(() => {
@@ -558,6 +580,249 @@ describe('AuthService', () => {
       await authService.exchangeAuthCode(validDto);
 
       expect(callOrder).toEqual(['markUsed', 'createSession']);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // MFA Features (mfaSetup, mfaEnable, mfaDisable, mfaAuthenticate, login challenge)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe('MFA login challenge', () => {
+    it('should return mfaRequired: true and mfaToken when MFA is enabled on user account', async () => {
+      const passwordHash = await bcrypt.hash('password123', 10);
+      mockUserRepository.findByEmail.mockResolvedValue({
+        _id: 'user:mfa-123',
+        email: 'mfa-user@example.com',
+        username: 'mfauser',
+        passwordHash,
+        status: 'active',
+        emailVerified: true,
+        mfa: {
+          enabled: true,
+          secret: 'iv:tag:encrypted',
+          backupCodes: ['hash1'],
+          enrolledAt: new Date().toISOString(),
+        },
+      });
+
+      const result = await authService.login({
+        email: 'mfa-user@example.com',
+        password: 'password123',
+      });
+
+      expect(result).toEqual({
+        mfaRequired: true,
+        mfaToken: 'mock-mfa-challenge-token',
+        user: {
+          id: 'user:mfa-123',
+          email: 'mfa-user@example.com',
+          username: 'mfauser',
+        },
+      });
+      expect(sessionService.createSession).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('mfaSetup', () => {
+    it('should generate new secret and keyUri for active user', async () => {
+      mockUserRepository.findById.mockResolvedValue({
+        _id: 'user:123',
+        email: 'user@example.com',
+        status: 'active',
+      });
+
+      const result = await authService.mfaSetup('user:123');
+
+      expect(result).toHaveProperty('secret');
+      expect(result).toHaveProperty('keyUri');
+      expect(mfaService.generateSecret).toHaveBeenCalled();
+      expect(mfaService.generateKeyUri).toHaveBeenCalledWith('user@example.com', expect.any(String));
+    });
+
+    it('should throw UnauthorizedException if user is not found or inactive', async () => {
+      mockUserRepository.findById.mockResolvedValue(null);
+
+      await expect(authService.mfaSetup('non-existent')).rejects.toThrow(
+        UnauthorizedException,
+      );
+    });
+  });
+
+  describe('mfaEnable', () => {
+    it('should verify code, encrypt secret, save backup codes, and activate MFA', async () => {
+      mockUserRepository.findById.mockResolvedValue({
+        _id: 'user:123',
+        email: 'user@example.com',
+        status: 'active',
+      });
+      mockMfaService.verifyTotp.mockReturnValue(true);
+      mockUserRepository.updateUser.mockResolvedValue({ ok: true });
+
+      const dto = {
+        code: '123456',
+        secret: 'MOCKBASE32SECRET234567MOCKSECRET',
+      };
+
+      const result = await authService.mfaEnable('user:123', dto);
+
+      expect(result.success).toBe(true);
+      expect(result).toHaveProperty('backupCodes');
+      expect(mfaService.encryptSecret).toHaveBeenCalledWith(dto.secret);
+      expect(mfaService.generateBackupCodes).toHaveBeenCalledWith(8);
+      expect(userRepo.updateUser).toHaveBeenCalledWith(
+        'user:123',
+        expect.objectContaining({
+          mfa: expect.objectContaining({
+            enabled: true,
+            secret: 'iv:tag:encryptedSecret',
+          }),
+        }),
+      );
+    });
+
+    it('should throw BadRequestException if TOTP code verification fails', async () => {
+      mockUserRepository.findById.mockResolvedValue({
+        _id: 'user:123',
+        status: 'active',
+      });
+      mockMfaService.verifyTotp.mockReturnValue(false);
+
+      const dto = { code: '000000', secret: 'MOCKSECRET' };
+
+      await expect(authService.mfaEnable('user:123', dto)).rejects.toThrow(
+        'Invalid verification code. Please check your authenticator app.',
+      );
+      expect(userRepo.updateUser).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('mfaDisable', () => {
+    it('should disable MFA when valid password and TOTP code are provided', async () => {
+      const passwordHash = await bcrypt.hash('validpass123', 10);
+      mockUserRepository.findById.mockResolvedValue({
+        _id: 'user:123',
+        passwordHash,
+        status: 'active',
+        mfa: {
+          enabled: true,
+          secret: 'iv:tag:encryptedSecret',
+          backupCodes: ['hash1'],
+        },
+      });
+      mockMfaService.verifyTotp.mockReturnValue(true);
+      mockUserRepository.updateUser.mockResolvedValue({ ok: true });
+
+      const result = await authService.mfaDisable('user:123', {
+        password: 'validpass123',
+        code: '123456',
+      });
+
+      expect(result.success).toBe(true);
+      expect(userRepo.updateUser).toHaveBeenCalledWith(
+        'user:123',
+        expect.not.objectContaining({ mfa: expect.anything() }),
+      );
+    });
+
+    it('should throw UnauthorizedException if password is wrong', async () => {
+      const passwordHash = await bcrypt.hash('correctpass', 10);
+      mockUserRepository.findById.mockResolvedValue({
+        _id: 'user:123',
+        passwordHash,
+        status: 'active',
+        mfa: { enabled: true },
+      });
+
+      await expect(
+        authService.mfaDisable('user:123', { password: 'wrongpass', code: '123456' }),
+      ).rejects.toThrow('Invalid password');
+    });
+  });
+
+  describe('mfaAuthenticate', () => {
+    it('should authenticate user with valid challenge token and TOTP code', async () => {
+      (tokenService.verifyMfaChallengeToken as jest.Mock).mockResolvedValue({
+        sub: 'user:mfa-123',
+        type: 'mfa_challenge',
+      });
+      mockUserRepository.findById.mockResolvedValue({
+        _id: 'user:mfa-123',
+        email: 'user@example.com',
+        username: 'mfauser',
+        status: 'active',
+        mfa: {
+          enabled: true,
+          secret: 'iv:tag:encryptedSecret',
+          backupCodes: ['hash1'],
+        },
+      });
+      mockMfaService.verifyTotp.mockReturnValue(true);
+      mockUserRepository.updateUser.mockResolvedValue({ ok: true });
+
+      const result = await authService.mfaAuthenticate({
+        mfa_token: 'valid-challenge-token',
+        code: '123456',
+      });
+
+      expect(result).toHaveProperty('accessToken');
+      expect(result).toHaveProperty('refreshToken');
+      expect(sessionService.createSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('should authenticate with single-use backup recovery code and consume it', async () => {
+      (tokenService.verifyMfaChallengeToken as jest.Mock).mockResolvedValue({
+        sub: 'user:mfa-123',
+        type: 'mfa_challenge',
+      });
+      const userDoc = {
+        _id: 'user:mfa-123',
+        email: 'user@example.com',
+        username: 'mfauser',
+        status: 'active' as const,
+        mfa: {
+          enabled: true,
+          secret: 'iv:tag:encryptedSecret',
+          backupCodes: ['hash-code-0', 'hash-code-1'],
+          enrolledAt: new Date().toISOString(),
+        },
+      };
+      mockUserRepository.findById.mockResolvedValue(userDoc);
+      mockMfaService.verifyBackupCode.mockResolvedValue(0); // matches index 0
+      mockUserRepository.updateUser.mockResolvedValue({ ok: true });
+
+      const result = await authService.mfaAuthenticate({
+        mfa_token: 'valid-challenge-token',
+        backup_code: 'code-0000',
+      });
+
+      expect(result).toHaveProperty('accessToken');
+      // The backup code at index 0 should have been removed
+      expect(userDoc.mfa.backupCodes).toHaveLength(1);
+      expect(userRepo.updateUser).toHaveBeenCalled();
+    });
+
+    it('should throw UnauthorizedException if backup code is invalid or already used', async () => {
+      (tokenService.verifyMfaChallengeToken as jest.Mock).mockResolvedValue({
+        sub: 'user:mfa-123',
+        type: 'mfa_challenge',
+      });
+      mockUserRepository.findById.mockResolvedValue({
+        _id: 'user:mfa-123',
+        status: 'active',
+        mfa: {
+          enabled: true,
+          secret: 'iv:tag:encryptedSecret',
+          backupCodes: ['hash-code-0'],
+        },
+      });
+      mockMfaService.verifyBackupCode.mockResolvedValue(-1);
+
+      await expect(
+        authService.mfaAuthenticate({
+          mfa_token: 'valid-challenge-token',
+          backup_code: 'wrong-backup-code',
+        }),
+      ).rejects.toThrow('Invalid or already used backup code');
     });
   });
 });

@@ -5,6 +5,7 @@ import { PassportModule } from '@nestjs/passport';
 import { JwtModule } from '@nestjs/jwt';
 
 import { AuthService } from './auth.service';
+import { MfaService } from './mfa.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { SessionModule } from '../sessions/session.module';
@@ -24,12 +25,13 @@ import { CouchDbAuthCodeRepository } from './couchdb-auth-code.repository';
   controllers: [AuthController],
   providers: [
     AuthService,
+    MfaService,
     JwtStrategy,
     {
       provide: AuthCodeRepository,
       useClass: CouchDbAuthCodeRepository,
     },
   ],
-  exports: [AuthService, JwtStrategy, PassportModule],
+  exports: [AuthService, MfaService, JwtStrategy, PassportModule],
 })
 export class AuthModule {}
