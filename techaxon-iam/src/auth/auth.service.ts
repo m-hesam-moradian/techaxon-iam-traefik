@@ -470,7 +470,7 @@ export class AuthService {
     }
 
     // 5. Atomically mark the code as used — prevents replay attacks
-    await this.authCodeRepo.markUsed(authCodeDoc._id, authCodeDoc._rev ?? '');
+    await this.authCodeRepo.markUsed(authCodeDoc._id!, authCodeDoc._rev ?? '');
 
     const userId = authCodeDoc.userId;
 

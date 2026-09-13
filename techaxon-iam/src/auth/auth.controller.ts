@@ -245,7 +245,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   async mfaSetup(@Req() req: Request & { user: AuthenticatedUser }) {
-    return await this.authService.mfaSetup(req.user.id);
+    return await this.authService.mfaSetup(req.user.userId);
   }
 
   /**
@@ -264,7 +264,7 @@ export class AuthController {
     @Req() req: Request & { user: AuthenticatedUser },
     @Body() dto: MfaEnableDto,
   ) {
-    return await this.authService.mfaEnable(req.user.id, dto);
+    return await this.authService.mfaEnable(req.user.userId, dto);
   }
 
   /**
@@ -283,7 +283,7 @@ export class AuthController {
     @Req() req: Request & { user: AuthenticatedUser },
     @Body() dto: MfaDisableDto,
   ) {
-    return await this.authService.mfaDisable(req.user.id, dto);
+    return await this.authService.mfaDisable(req.user.userId, dto);
   }
 
   /**

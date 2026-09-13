@@ -34,7 +34,7 @@ async function bootstrap() {
       if (isAllowed) {
         callback(null, true);
       } else {
-        callback(null, true); // Permissive in dev mode for local testing
+        callback(new Error(`CORS: origin '${origin}' is not allowed`));
       }
     },
     credentials: true,
