@@ -65,10 +65,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [clientId] = useState<string>("techaxon-web");
   const [iamBaseUrl, setIamBaseUrlState] = useState<string>("http://localhost:3000");
 
+  // Load saved IAM Base URL on mount
+  useEffect(() => {
+    const savedUrl = localStorage.getItem("iamBaseUrl");
+    if (savedUrl) {
+      setIamBaseUrlState(savedUrl);
+    }
+  }, []);
+
   const clearError = () => setError(null);
 
   const setIamBaseUrl = (url: string) => {
     setIamBaseUrlState(url);
+    localStorage.setItem("iamBaseUrl", url);
   };
 
   // Fetch current user profile using access token (GET /auth/me)
