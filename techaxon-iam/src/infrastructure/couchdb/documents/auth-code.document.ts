@@ -33,6 +33,11 @@ export interface AuthCodeDocument extends BaseDocument {
   clientId: string;
 
   /**
+   * The exact redirect_uri used during the authorization request.
+   */
+  redirectUri: string;
+
+  /**
    * ISO-8601 expiry timestamp, exactly 60 seconds after creation.
    */
   expiresAt: string;

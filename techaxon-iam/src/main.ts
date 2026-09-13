@@ -55,8 +55,8 @@ async function bootstrap() {
   );
 
   // Configure Static Assets (CSS, JS, Images) & Handlebars Views
-  app.useStaticAssets(join(__dirname, '..', 'public'));
-  app.setBaseViewsDir(join(__dirname, '..', 'views'));
+  app.useStaticAssets(join(process.cwd(), 'public'));
+  app.setBaseViewsDir(join(process.cwd(), 'views'));
   app.setViewEngine('hbs');
 
   await app.listen(process.env.PORT ?? 3000);

@@ -357,7 +357,7 @@ export class AuthService {
    * that expires in exactly 60 seconds. Persists it to CouchDB via
    * AuthCodeRepository (never touches nano directly).
    */
-  async generateAuthorizationCode(userId: string, clientId: string): Promise<string> {
+  async generateAuthorizationCode(userId: string, clientId: string, redirectUri: string): Promise<string> {
     const code = randomBytes(32).toString('hex');
     const id = `auth_code:${randomUUID()}`;
     const now = new Date().toISOString();
@@ -368,6 +368,7 @@ export class AuthService {
       code,
       userId,
       clientId,
+      redirectUri,
       expiresAt,
       used: false,
       createdAt: now,
@@ -467,6 +468,11 @@ export class AuthService {
     // 4. Verify client_id matches the one stored with the code
     if (authCodeDoc.clientId !== dto.client_id) {
       throw new UnauthorizedException('client_id does not match the authorization code');
+    }
+
+    // 4.5. Verify redirect_uri exactly matches the one used during /authorize
+    if (authCodeDoc.redirectUri !== dto.redirect_uri) {
+      throw new UnauthorizedException('redirect_uri does not match the authorization code');
     }
 
     // 5. Atomically mark the code as used — prevents replay attacks

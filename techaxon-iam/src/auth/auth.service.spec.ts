@@ -309,7 +309,7 @@ describe('AuthService', () => {
         rev: '1-abc',
       });
 
-      const code = await authService.generateAuthorizationCode('user:123', 'client-app');
+      const code = await authService.generateAuthorizationCode('user:123', 'client-app', 'http://localhost/callback');
 
       expect(typeof code).toBe('string');
       expect(code.length).toBeGreaterThan(0);
@@ -324,7 +324,7 @@ describe('AuthService', () => {
       const userId = 'user:abc-123';
       const clientId = 'my-client';
 
-      await authService.generateAuthorizationCode(userId, clientId);
+      await authService.generateAuthorizationCode(userId, clientId, 'http://localhost/callback');
 
       expect(authCodeRepo.saveAuthCode).toHaveBeenCalledWith(
         expect.stringMatching(/^auth_code:/),
@@ -344,7 +344,7 @@ describe('AuthService', () => {
       });
 
       const before = Date.now();
-      await authService.generateAuthorizationCode('user:123', 'client-app');
+      await authService.generateAuthorizationCode('user:123', 'client-app', 'http://localhost/callback');
       const after = Date.now();
 
       const saveAuthCodeCalls = mockAuthCodeRepository.saveAuthCode.mock.calls as [

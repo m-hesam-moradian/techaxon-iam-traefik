@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAuth, REGISTERED_CLIENTS } from "@/context/auth-context";
+import { useAuth } from "@/context/auth-context";
 import { MfaSetupModal } from "@/components/mfa-setup-modal";
 import { MfaDisableModal } from "@/components/mfa-disable-modal";
 
@@ -192,17 +192,9 @@ export default function Home() {
                     <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
                       OIDC Client Identifier
                     </label>
-                    <select
-                      value={clientId}
-                      onChange={(e) => setClientId(e.target.value)}
-                      className="w-full rounded-xl border border-zinc-300 bg-white px-3.5 py-2.5 text-sm font-medium text-zinc-900 shadow-sm transition dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    >
-                      {REGISTERED_CLIENTS.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name} ({c.id})
-                        </option>
-                      ))}
-                    </select>
+                    <div className="w-full rounded-xl border border-zinc-300 bg-zinc-50 px-3.5 py-2.5 text-sm font-medium text-zinc-500 shadow-sm dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400">
+                      TechAxon Web Portal (techaxon-web)
+                    </div>
                   </div>
 
                   <div className="space-y-1.5">

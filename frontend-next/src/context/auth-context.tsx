@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 
@@ -25,7 +25,6 @@ interface AuthContextType {
   isLoading: boolean;
   error: string | null;
   clientId: string;
-  setClientId: (id: string) => void;
   iamBaseUrl: string;
   setIamBaseUrl: (url: string) => void;
   loginWithSSO: (customClientId?: string) => void;
@@ -53,13 +52,7 @@ const STORAGE_KEYS = {
   OIDC_STATE: "techaxon_oidc_state",
 };
 
-export const REGISTERED_CLIENTS = [
-  { id: "techaxon-web", name: "TechAxon Web Portal", callbackUrl: "/callback" },
-  { id: "techaxon-lms", name: "TechAxon LMS", callbackUrl: "/callback" },
-  { id: "techaxon-kanban", name: "TechAxon Kanban", callbackUrl: "/callback" },
-  { id: "techaxon-shop", name: "TechAxon Shop", callbackUrl: "/callback" },
-  { id: "test-client", name: "Test Client Application", callbackUrl: "/callback" },
-];
+
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -69,17 +62,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [tokenExpiresAt, setTokenExpiresAt] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [clientId, setClientIdState] = useState<string>("techaxon-web");
+  const [clientId] = useState<string>("techaxon-web");
   const [iamBaseUrl, setIamBaseUrlState] = useState<string>("http://localhost:3000");
 
   const clearError = () => setError(null);
-
-  const setClientId = (id: string) => {
-    setClientIdState(id);
-    if (typeof window !== "undefined") {
-      localStorage.setItem(STORAGE_KEYS.CLIENT_ID, id);
-    }
-  };
 
   const setIamBaseUrl = (url: string) => {
     setIamBaseUrlState(url);
@@ -133,11 +119,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const savedRefreshToken = localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
       const savedUser = localStorage.getItem(STORAGE_KEYS.USER);
       const savedExpiresAt = localStorage.getItem(STORAGE_KEYS.EXPIRES_AT);
-      const savedClientId = localStorage.getItem(STORAGE_KEYS.CLIENT_ID);
-
-      if (savedClientId) {
-        setClientIdState(savedClientId);
-      }
 
       if (savedAccessToken) {
         setAccessToken(savedAccessToken);
@@ -471,7 +452,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isLoading,
         error,
         clientId,
-        setClientId,
         iamBaseUrl,
         setIamBaseUrl,
         loginWithSSO,

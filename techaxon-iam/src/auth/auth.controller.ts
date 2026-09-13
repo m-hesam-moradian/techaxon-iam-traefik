@@ -92,6 +92,18 @@ export class AuthController {
     }
 
     this.setRefreshTokenCookie(res, result.refreshToken);
+
+    if (dto.clientId && dto.redirectUri) {
+      const params = new URLSearchParams({
+        client_id: dto.clientId,
+        redirect_uri: dto.redirectUri,
+        response_type: 'code',
+      });
+      if (dto.state) params.set('state', dto.state);
+      
+      return res.redirect(302, `/auth/authorize?${params.toString()}`);
+    }
+
     return result;
   }
 
@@ -151,7 +163,7 @@ export class AuthController {
       const userId = await this.authService.validateRefreshTokenCookie(cookie);
 
       if (userId) {
-        const code = await this.authService.generateAuthorizationCode(userId, query.client_id);
+        const code = await this.authService.generateAuthorizationCode(userId, query.client_id, query.redirect_uri);
 
         const redirectUrl = new URL(query.redirect_uri);
         redirectUrl.searchParams.set('code', code);

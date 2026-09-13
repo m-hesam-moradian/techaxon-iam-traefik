@@ -21,6 +21,11 @@ export interface CreateAuthCodeData {
   clientId: string;
 
   /**
+   * The redirect_uri used during the authorization request.
+   */
+  redirectUri: string;
+
+  /**
    * ISO-8601 expiry timestamp, exactly 60 seconds from creation.
    */
   expiresAt: string;
