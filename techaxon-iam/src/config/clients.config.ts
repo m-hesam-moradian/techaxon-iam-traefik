@@ -56,6 +56,7 @@ export const DEFAULT_CLIENTS: Record<string, RegisteredClient> = {
       'http://localhost:3000/api/auth/callback',
       'https://portal.techaxon.com/api/auth/callback',
       'http://localhost:3001/callback',
+      'https://humble-trout-5wwwww7995v2v9gj-3001.app.github.dev/callback',
     ],
   },
   'techaxon-app': {

@@ -16,7 +16,7 @@ export interface CreateAuthCodeData {
   userId: string;
 
   /**
-   * The OIDC client that requested the code.
+   * The OAuth 2.0 client that requested the code.
    */
   clientId: string;
 

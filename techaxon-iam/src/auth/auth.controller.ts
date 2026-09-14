@@ -131,7 +131,7 @@ export class AuthController {
 
   /**
    * ------------------------------------------------------------------------
-   * OIDC Authorization Endpoint
+   * OAuth 2.0 Authorization Endpoint
    * GET /auth/authorize?client_id=...&redirect_uri=...&state=...&response_type=code
    *
    * SSO routing logic:
@@ -225,13 +225,13 @@ export class AuthController {
 
   /**
    * ------------------------------------------------------------------------
-   * OIDC Token Exchange
+   * OAuth 2.0 Token Exchange
    * POST /auth/token
    *
    * Exchanges a short-lived (60s) single-use authorization code (received
    * from GET /auth/authorize via ?code=) for a real accessToken + refreshToken.
    *
-   * This is Step 8 of the OIDC Authorization Code Grant flow (RFC 6749 §4.1.3).
+   * This is Step 8 of the OAuth 2.0 Authorization Code Grant flow (RFC 6749 §4.1.3).
    * No authentication guard — the code itself is the credential.
    * ------------------------------------------------------------------------
    */

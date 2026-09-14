@@ -3,10 +3,14 @@
 import { BaseDocument } from './base.document';
 
 /**
- * CouchDB document representing a short-lived OIDC Authorization Code.
+ * CouchDB document representing a short-lived OAuth 2.0 Authorization Code.
  *
  * Expires exactly 60 seconds after creation.
  * Can only be used once (used: true after redemption).
+ *
+ * PKCE (Phase 3):
+ *   Add optional fields: codeChallenge?: string; codeChallengeMethod?: 'S256';
+ *   Existing documents without these fields remain valid (undefined = no PKCE).
  */
 export interface AuthCodeDocument extends BaseDocument {
   /**
@@ -28,7 +32,7 @@ export interface AuthCodeDocument extends BaseDocument {
   userId: string;
 
   /**
-   * The OIDC client that initiated the authorization request.
+   * The OAuth 2.0 client that initiated the authorization request.
    */
   clientId: string;
 

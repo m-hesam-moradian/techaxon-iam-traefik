@@ -75,6 +75,8 @@ describe('AuthService', () => {
       createSession: jest.fn(),
       findSessionById: jest.fn(),
       revokeSession: jest.fn(),
+      updateSession: jest.fn(),
+      revokeAllUserSessions: jest.fn(),
     };
     const mockTokenService = {
       generateAccessToken: jest.fn().mockReturnValue('mock-access-token'),
@@ -467,6 +469,79 @@ describe('AuthService', () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
+  // refreshToken()
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe('refreshToken', () => {
+    it('should issue a new access token AND a new refresh token on valid use (rotation)', async () => {
+      const oldRefreshToken = 'old-refresh-token-value';
+      const oldHash = await bcrypt.hash(oldRefreshToken, 10);
+
+      (tokenService.verifyRefreshToken as jest.Mock).mockResolvedValue({
+        sub: 'user:123',
+        sid: 'session:abc',
+        type: 'refresh',
+      });
+      (sessionService.findSessionById as jest.Mock).mockResolvedValue({
+        _id: 'session:abc',
+        _rev: '1-aaa',
+        userId: 'user:123',
+        status: 'active',
+        refreshTokenHash: oldHash,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        lastAccessedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      (sessionService.updateSession as jest.Mock).mockResolvedValue(undefined);
+
+      const result = await authService.refreshToken(oldRefreshToken);
+
+      // Both tokens must be returned
+      expect(result).toHaveProperty('accessToken');
+      expect(result).toHaveProperty('refreshToken');
+      // The old token is invalidated: session must be updated with new hash
+      expect(sessionService.updateSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('should revoke ALL user sessions when a previously-rotated token is replayed (reuse detection)', async () => {
+      const staleToken = 'stale-old-refresh-token';
+      // Store hash of a DIFFERENT token — simulates token already rotated
+      const hashOfDifferentToken = await bcrypt.hash('current-valid-token', 10);
+
+      (tokenService.verifyRefreshToken as jest.Mock).mockResolvedValue({
+        sub: 'user:123',
+        sid: 'session:abc',
+        type: 'refresh',
+      });
+      (sessionService.findSessionById as jest.Mock).mockResolvedValue({
+        _id: 'session:abc',
+        userId: 'user:123',
+        status: 'active',
+        refreshTokenHash: hashOfDifferentToken,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+      (sessionService.revokeAllUserSessions as jest.Mock).mockResolvedValue(undefined);
+
+      await expect(authService.refreshToken(staleToken)).rejects.toThrow(
+        'Refresh token reuse detected',
+      );
+
+      // All user sessions must be nuked
+      expect(sessionService.revokeAllUserSessions).toHaveBeenCalledWith('user:123');
+      // No new tokens should have been issued
+      expect(sessionService.updateSession).not.toHaveBeenCalled();
+    });
+
+    it('should throw UnauthorizedException when the JWT is invalid', async () => {
+      (tokenService.verifyRefreshToken as jest.Mock).mockRejectedValue(new Error('jwt expired'));
+
+      await expect(authService.refreshToken('bad-token')).rejects.toThrow(
+        'Invalid or expired refresh token',
+      );
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
   // exchangeAuthCode()
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -485,13 +560,14 @@ describe('AuthService', () => {
       code: 'valid-hex-auth-code',
       userId: 'user:abc',
       clientId: 'test-client',
+      redirectUri: 'https://app.example.com/callback',
       expiresAt: new Date(Date.now() + 30_000).toISOString(), // 30s in future
       used: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
-    it('should return OIDC-compliant tokens on valid code exchange', async () => {
+    it('should return OAuth 2.0-compliant tokens on valid code exchange', async () => {
       mockAuthCodeRepository.findByCode.mockResolvedValue(validAuthCodeDoc);
       mockAuthCodeRepository.markUsed.mockResolvedValue(undefined);
       (sessionService.createSession as jest.Mock).mockResolvedValue(undefined);
@@ -508,61 +584,61 @@ describe('AuthService', () => {
       expect(sessionService.createSession).toHaveBeenCalledTimes(1);
     });
 
-    it('should throw UnauthorizedException when code is not found', async () => {
+    it('should throw invalid_grant when code is not found', async () => {
       mockAuthCodeRepository.findByCode.mockResolvedValue(null);
 
-      await expect(authService.exchangeAuthCode(validDto)).rejects.toThrow(
-        'Invalid or already used authorization code',
-      );
+      await expect(authService.exchangeAuthCode(validDto)).rejects.toMatchObject({
+        response: { error: 'invalid_grant', error_description: 'Invalid or already used authorization code' },
+      });
       expect(authCodeRepo.markUsed).not.toHaveBeenCalled();
     });
 
-    it('should throw UnauthorizedException when code has expired', async () => {
+    it('should throw invalid_grant when code has expired', async () => {
       mockAuthCodeRepository.findByCode.mockResolvedValue({
         ...validAuthCodeDoc,
         expiresAt: new Date(Date.now() - 1_000).toISOString(), // already expired
       });
 
-      await expect(authService.exchangeAuthCode(validDto)).rejects.toThrow(
-        'Authorization code has expired',
-      );
+      await expect(authService.exchangeAuthCode(validDto)).rejects.toMatchObject({
+        response: { error: 'invalid_grant', error_description: 'Authorization code has expired' },
+      });
       expect(authCodeRepo.markUsed).not.toHaveBeenCalled();
     });
 
-    it('should throw UnauthorizedException when client_id does not match the code', async () => {
+    it('should throw invalid_grant when client_id does not match the code', async () => {
       mockAuthCodeRepository.findByCode.mockResolvedValue({
         ...validAuthCodeDoc,
         clientId: 'different-client', // mismatch
       });
 
-      await expect(authService.exchangeAuthCode(validDto)).rejects.toThrow(
-        'client_id does not match the authorization code',
-      );
+      await expect(authService.exchangeAuthCode(validDto)).rejects.toMatchObject({
+        response: { error: 'invalid_grant', error_description: 'client_id does not match the authorization code' },
+      });
       expect(authCodeRepo.markUsed).not.toHaveBeenCalled();
     });
 
-    it('should throw BadRequestException when redirect_uri is not registered for client', async () => {
+    it('should throw invalid_client when redirect_uri is not registered for client', async () => {
       const dtoWithBadRedirect = {
         ...validDto,
         redirect_uri: 'https://attacker.com/steal',
       };
 
-      await expect(authService.exchangeAuthCode(dtoWithBadRedirect)).rejects.toThrow(
-        'Invalid client_id or unauthorized redirect_uri',
-      );
+      await expect(authService.exchangeAuthCode(dtoWithBadRedirect)).rejects.toMatchObject({
+        response: { error: 'invalid_client', error_description: 'Invalid client_id or unauthorized redirect_uri' },
+      });
       expect(authCodeRepo.findByCode).not.toHaveBeenCalled();
       expect(authCodeRepo.markUsed).not.toHaveBeenCalled();
     });
 
-    it('should throw BadRequestException when client_id is not registered', async () => {
+    it('should throw invalid_client when client_id is not registered', async () => {
       const dtoWithBadClient = {
         ...validDto,
         client_id: 'unregistered-client',
       };
 
-      await expect(authService.exchangeAuthCode(dtoWithBadClient)).rejects.toThrow(
-        'Invalid client_id or unauthorized redirect_uri',
-      );
+      await expect(authService.exchangeAuthCode(dtoWithBadClient)).rejects.toMatchObject({
+        response: { error: 'invalid_client', error_description: 'Invalid client_id or unauthorized redirect_uri' },
+      });
       expect(authCodeRepo.findByCode).not.toHaveBeenCalled();
     });
 
@@ -823,6 +899,63 @@ describe('AuthService', () => {
           backup_code: 'wrong-backup-code',
         }),
       ).rejects.toThrow('Invalid or already used backup code');
+    });
+  });
+  describe('exchangeAuthCode', () => {
+    const validAuthCodeDoc = {
+      _id: 'auth_code:abc-123',
+      _rev: '1-aaa',
+      type: 'auth_code' as const,
+      code: 'valid-code-hex',
+      userId: 'user:456',
+      clientId: 'test-client',
+      redirectUri: 'http://localhost:3000/callback',
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      used: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    it('should return tokens when auth code is valid', async () => {
+      mockAuthCodeRepository.findByCode.mockResolvedValue(validAuthCodeDoc);
+      mockAuthCodeRepository.markUsed.mockResolvedValue(undefined);
+
+      const result = await authService.exchangeAuthCode({
+        grant_type: 'authorization_code',
+        code: 'valid-code-hex',
+        client_id: 'test-client',
+        redirect_uri: 'http://localhost:3000/callback',
+      });
+
+      expect(result).toHaveProperty('access_token');
+      expect(result).toHaveProperty('refresh_token');
+      expect(result.token_type).toBe('Bearer');
+      expect(sessionService.createSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throw invalid_grant and NOT create a session when markUsed throws a 409 conflict (concurrent request)', async () => {
+      mockAuthCodeRepository.findByCode.mockResolvedValue(validAuthCodeDoc);
+
+      // Simulate CouchDB 409 Conflict — the code was already consumed by a racing request
+      const conflictError = Object.assign(new Error('conflict'), { statusCode: 409 });
+      mockAuthCodeRepository.markUsed.mockRejectedValue(conflictError);
+
+      await expect(
+        authService.exchangeAuthCode({
+          grant_type: 'authorization_code',
+          code: 'valid-code-hex',
+          client_id: 'test-client',
+          redirect_uri: 'http://localhost:3000/callback',
+        }),
+      ).rejects.toMatchObject({
+        response: {
+          error: 'invalid_grant',
+          error_description: 'Authorization code has already been used',
+        },
+      });
+
+      // The losing request must NOT have created a session or issued tokens
+      expect(sessionService.createSession).not.toHaveBeenCalled();
     });
   });
 });

@@ -156,7 +156,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const activeClientId = customClientId || clientId;
     const redirectUri = `${window.location.origin}/callback`;
-    const state = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const state = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
 
     sessionStorage.setItem(STORAGE_KEYS.OIDC_STATE, state);
     sessionStorage.setItem(STORAGE_KEYS.CLIENT_ID, activeClientId);

@@ -84,21 +84,20 @@ export class CouchDbAuthCodeRepository implements AuthCodeRepository {
     const now = new Date().toISOString();
 
     /**
-     * Fetch the full document so we can write back a complete, valid CouchDB
-     * document (required to avoid stripping existing fields on update).
+     * We intentionally do NOT re-fetch the document here.
+     *
+     * Using the _rev that was read during findByCode ensures CouchDB's
+     * optimistic-concurrency check fires: if two requests race, only the
+     * first insert wins; the second receives a 409 Conflict which the
+     * service layer converts to an invalid_grant error.
+     *
+     * Re-fetching would give us a fresh _rev, defeating this protection.
      */
-    const existing = await this.db.get(id);
-
-    if (!isAuthCodeDocument(existing)) {
-      return;
-    }
-
     await this.db.insert({
-      ...existing,
       _id: id,
       _rev: rev,
       used: true,
       updatedAt: now,
-    });
+    } as any);
   }
 }

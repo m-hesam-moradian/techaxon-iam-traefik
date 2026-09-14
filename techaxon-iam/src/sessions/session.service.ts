@@ -58,6 +58,21 @@ export class SessionService {
   async revokeSession(sessionId: string): Promise<void> {
     await this.sessionRepository.revokeSession(sessionId);
   }
+
+  /**
+   * Updates an existing session document (used for refresh token rotation).
+   */
+  async updateSession(session: SessionDocument): Promise<void> {
+    await this.sessionRepository.updateSession(session);
+  }
+
+  /**
+   * Revokes all active sessions for a user.
+   * Called when a refresh token reuse attack is detected.
+   */
+  async revokeAllUserSessions(userId: string): Promise<void> {
+    await this.sessionRepository.revokeAllUserSessions(userId);
+  }
 }
 
 // findById()

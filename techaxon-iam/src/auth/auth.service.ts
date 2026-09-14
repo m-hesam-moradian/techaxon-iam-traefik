@@ -251,10 +251,24 @@ export class AuthService {
   }
 
   /**
-   * Refresh expired access token using a valid refresh token.
+   * ------------------------------------------------------------------------
+   * Refresh Token Rotation
+   * ------------------------------------------------------------------------
+   *
+   * On every call:
+   *  1. Validates the JWT structure and signature.
+   *  2. Loads the session and checks it is active and not expired.
+   *  3. Verifies the token against the stored hash.
+   *     → If it does NOT match, a previously-rotated token is being replayed
+   *       (token theft indicator). ALL user sessions are immediately revoked.
+   *  4. Issues a brand-new refresh token and hashes it into the session.
+   *  5. Issues a new access token.
+   *  6. Returns both tokens to the caller.
+   *
+   * The old refresh token is invalidated as soon as the session hash is updated.
    */
   async refreshToken(refreshTokenStr: string) {
-    // ۱. اعتبارسنجی اولیه ساختار JWT
+    // 1. Validate JWT structure and signature
     let payload: JwtPayload;
     try {
       payload = await this.tokenService.verifyRefreshToken(refreshTokenStr);
@@ -269,24 +283,43 @@ export class AuthService {
     const userId = payload.sub;
     const sessionId = payload.sid;
 
-    // ۲. دریافت نشست (Session) از دیتابیس
+    // 2. Load session
     const session = await this.sessionService.findSessionById(sessionId);
     if (!session || session.status !== 'active') {
       throw new UnauthorizedException('Session is inactive or revoked');
     }
 
-    // ۳. بررسی انقضای تاریخ نشست
+    // 3. Check session has not expired
     if (new Date(session.expiresAt) < new Date()) {
       throw new UnauthorizedException('Session has expired');
     }
 
-    // ۴. تطبیق توکن با هش ذخیره‌شده در دیتابیس (بررسی عدم جعل)
+    // 4. Verify token against stored hash.
+    //    A mismatch means this token was already rotated → replay attack detected.
+    //    Revoke ALL sessions for this user immediately to limit blast radius.
     const isTokenValid = await bcrypt.compare(refreshTokenStr, session.refreshTokenHash);
     if (!isTokenValid) {
-      throw new UnauthorizedException('Invalid refresh token');
+      await this.sessionService.revokeAllUserSessions(userId);
+      throw new UnauthorizedException(
+        'Refresh token reuse detected. All sessions have been revoked.',
+      );
     }
 
-    // ۵. صدور Access Token جدید
+    // 5. Rotate: generate a new refresh token and hash it into the session
+    const newRefreshToken = this.tokenService.generateRefreshToken({
+      sub: userId,
+      sid: sessionId,
+      type: 'refresh',
+    });
+    const newRefreshTokenHash = await bcrypt.hash(newRefreshToken, 10);
+
+    const now = new Date().toISOString();
+    session.refreshTokenHash = newRefreshTokenHash;
+    session.lastAccessedAt = now;
+    session.updatedAt = now;
+    await this.sessionService.updateSession(session);
+
+    // 6. Issue a new access token
     const newAccessToken = this.tokenService.generateAccessToken({
       sub: userId,
       sid: sessionId,
@@ -295,6 +328,7 @@ export class AuthService {
 
     return {
       accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
     };
   }
 
@@ -350,7 +384,7 @@ export class AuthService {
 
   /**
    * ------------------------------------------------------------------------
-   * Generate OIDC Authorization Code
+   * Generate OAuth 2.0 Authorization Code
    * ------------------------------------------------------------------------
    *
    * Creates a cryptographically random, single-use authorization code
@@ -425,7 +459,7 @@ export class AuthService {
 
   /**
    * ------------------------------------------------------------------------
-   * Exchange Authorization Code for Tokens (OIDC Token Endpoint)
+   * Exchange Authorization Code for Tokens (OAuth 2.0 Token Endpoint)
    * ------------------------------------------------------------------------
    *
    * Validates the short-lived authorization code issued by /authorize and,
@@ -450,33 +484,71 @@ export class AuthService {
       dto.redirect_uri,
     );
     if (!isClientValid) {
-      throw new BadRequestException('Invalid client_id or unauthorized redirect_uri');
+      // RFC 6749 §5.2: unrecognised client → invalid_client (HTTP 400)
+      throw new BadRequestException({
+        error: 'invalid_client',
+        error_description: 'Invalid client_id or unauthorized redirect_uri',
+      });
     }
 
     // 2. Look up the auth code document
     const authCodeDoc = await this.authCodeRepo.findByCode(dto.code);
 
     if (!authCodeDoc) {
-      throw new UnauthorizedException('Invalid or already used authorization code');
+      // RFC 6749 §5.2: invalid/used code → invalid_grant (HTTP 400)
+      throw new BadRequestException({
+        error: 'invalid_grant',
+        error_description: 'Invalid or already used authorization code',
+      });
     }
 
     // 3. Verify the code has not expired (60s TTL)
     if (new Date(authCodeDoc.expiresAt) < new Date()) {
-      throw new UnauthorizedException('Authorization code has expired');
+      // RFC 6749 §5.2: expired code → invalid_grant (HTTP 400)
+      throw new BadRequestException({
+        error: 'invalid_grant',
+        error_description: 'Authorization code has expired',
+      });
     }
 
     // 4. Verify client_id matches the one stored with the code
     if (authCodeDoc.clientId !== dto.client_id) {
-      throw new UnauthorizedException('client_id does not match the authorization code');
+      // RFC 6749 §5.2: mismatched client → invalid_grant (HTTP 400)
+      throw new BadRequestException({
+        error: 'invalid_grant',
+        error_description: 'client_id does not match the authorization code',
+      });
     }
 
     // 4.5. Verify redirect_uri exactly matches the one used during /authorize
     if (authCodeDoc.redirectUri !== dto.redirect_uri) {
-      throw new UnauthorizedException('redirect_uri does not match the authorization code');
+      // RFC 6749 §5.2: mismatched redirect_uri → invalid_grant (HTTP 400)
+      throw new BadRequestException({
+        error: 'invalid_grant',
+        error_description: 'redirect_uri does not match the authorization code',
+      });
     }
 
-    // 5. Atomically mark the code as used — prevents replay attacks
-    await this.authCodeRepo.markUsed(authCodeDoc._id!, authCodeDoc._rev ?? '');
+    // 5. Atomically mark the code as used — prevents replay attacks.
+    //    CouchDB's _rev conflict detection ensures only one concurrent request
+    //    wins. The loser receives a 409 which we convert to invalid_grant so
+    //    no session or tokens are issued for that request.
+    try {
+      await this.authCodeRepo.markUsed(authCodeDoc._id!, authCodeDoc._rev ?? '');
+    } catch (err: unknown) {
+      const isConflict =
+        typeof err === 'object' &&
+        err !== null &&
+        ('statusCode' in err ? (err as { statusCode: number }).statusCode === 409 : false);
+
+      if (isConflict) {
+        throw new BadRequestException({
+          error: 'invalid_grant',
+          error_description: 'Authorization code has already been used',
+        });
+      }
+      throw err;
+    }
 
     const userId = authCodeDoc.userId;
 
@@ -511,7 +583,7 @@ export class AuthService {
     const accessExpiresInSeconds =
       (this.jwtConfiguration?.access?.expiresInMs ?? 15 * 60 * 1000) / 1000;
 
-    // 8. Return OIDC-compliant token response (RFC 6749 §5.1)
+    // 8. Return OAuth 2.0-compliant token response (RFC 6749 §5.1)
     return {
       access_token: accessToken,
       token_type: 'Bearer',

@@ -1,9 +1,9 @@
-﻿// src/auth/dto/token-exchange.dto.ts
+// src/auth/dto/token-exchange.dto.ts
 
 import { IsString, IsNotEmpty, IsIn, IsUrl } from 'class-validator';
 
 /**
- * Body parameters for the OIDC Token Exchange endpoint.
+ * Body parameters for the OAuth 2.0 Token Exchange endpoint.
  *
  * POST /auth/token
  *
@@ -11,6 +11,11 @@ import { IsString, IsNotEmpty, IsIn, IsUrl } from 'class-validator';
  * from GET /auth/authorize?...&code=<value> to exchange it for real tokens.
  *
  * Reference: RFC 6749 Section 4.1.3
+ *
+ * PKCE (Phase 3):
+ *   When PKCE support is added, extend this DTO with:
+ *     @IsOptional() @IsString() code_verifier?: string;
+ *   Then verify SHA-256(code_verifier) === stored code_challenge before issuing tokens.
  */
 export class TokenExchangeDto {
   /**

@@ -3,13 +3,19 @@
 import { IsString, IsNotEmpty, IsIn, IsUrl } from 'class-validator';
 
 /**
- * Query parameters for the OIDC Authorization Code flow.
+ * Query parameters for the OAuth 2.0 Authorization Code flow.
  *
  * GET /auth/authorize?client_id=...&redirect_uri=...&state=...&response_type=code
+ *
+ * PKCE (Phase 3):
+ *   When PKCE support is added, extend this DTO with:
+ *     @IsOptional() @IsString() code_challenge?: string;
+ *     @IsOptional() @IsIn(['S256']) code_challenge_method?: string;
+ *   No other changes to the controller or service flow are required.
  */
 export class AuthorizeQueryDto {
   /**
-   * The registered OIDC client identifier.
+   * The registered OAuth 2.0 client identifier.
    */
   @IsString()
   @IsNotEmpty()
