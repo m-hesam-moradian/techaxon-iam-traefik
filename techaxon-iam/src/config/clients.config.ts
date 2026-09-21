@@ -84,15 +84,27 @@ export const DEFAULT_CLIENTS: Record<string, RegisteredClient> = {
 };
 
 function loadClientsFromEnv(): Record<string, RegisteredClient> {
+  const webRedirectUri =
+    process.env.OIDC_WEB_REDIRECT_URI ?? 'http://localhost:3001/callback';
+  const defaultClients = {
+    ...DEFAULT_CLIENTS,
+    'techaxon-web': {
+      ...DEFAULT_CLIENTS['techaxon-web'],
+      allowedRedirectUris: [
+        ...DEFAULT_CLIENTS['techaxon-web'].allowedRedirectUris,
+        webRedirectUri,
+      ],
+    },
+  };
   const customClientsEnv = process.env.OIDC_CLIENTS_JSON;
   if (!customClientsEnv) {
-    return DEFAULT_CLIENTS;
+    return defaultClients;
   }
 
   try {
     const parsed = JSON.parse(customClientsEnv) as Record<string, RegisteredClient>;
     return {
-      ...DEFAULT_CLIENTS,
+      ...defaultClients,
       ...parsed,
     };
   } catch {

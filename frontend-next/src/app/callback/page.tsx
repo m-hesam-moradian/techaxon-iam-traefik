@@ -8,7 +8,7 @@ import Link from "next/link";
 function CallbackHandler() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { exchangeCode } = useAuth();
+  const { exchangeCode, error: authError } = useAuth();
   const [status, setStatus] = useState<"processing" | "success" | "error">("processing");
   const [errorMessage, setErrorMessage] = useState<string>("");
   const executedRef = useRef(false);
@@ -45,7 +45,6 @@ function CallbackHandler() {
           }, 1200);
         } else {
           setStatus("error");
-          setErrorMessage("Failed to exchange authorization code for tokens.");
         }
       } catch (err: unknown) {
         setStatus("error");
@@ -106,7 +105,7 @@ function CallbackHandler() {
                 Authorization Failed
               </h2>
               <div className="rounded-lg bg-rose-50 dark:bg-rose-950/40 p-3 text-xs text-rose-700 dark:text-rose-300 font-mono text-left break-words">
-                {errorMessage}
+                {errorMessage || authError || "Failed to exchange authorization code for tokens."}
               </div>
             </div>
             <Link

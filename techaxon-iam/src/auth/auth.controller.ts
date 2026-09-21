@@ -94,14 +94,16 @@ export class AuthController {
     this.setRefreshTokenCookie(res, result.refreshToken);
 
     if (dto.clientId && dto.redirectUri) {
-      const params = new URLSearchParams({
-        client_id: dto.clientId,
-        redirect_uri: dto.redirectUri,
-        response_type: 'code',
-      });
-      if (dto.state) params.set('state', dto.state);
-      
-      return res.redirect(302, `/auth/authorize?${params.toString()}`);
+      const forwardedProtocol = req.get('x-forwarded-proto')?.split(',')[0].trim();
+      const forwardedHost = req.get('x-forwarded-host')?.split(',')[0].trim();
+      const protocol = forwardedProtocol || req.protocol;
+      const host = forwardedHost || req.get('host');
+      const authorizeUrl = new URL(`${protocol}://${host}/auth/authorize`);
+      authorizeUrl.searchParams.set('client_id', dto.clientId);
+      authorizeUrl.searchParams.set('redirect_uri', dto.redirectUri);
+      if (dto.state) authorizeUrl.searchParams.set('state', dto.state);
+      authorizeUrl.searchParams.set('response_type', 'code');
+      return res.redirect(302, authorizeUrl.toString());
     }
 
     return result;

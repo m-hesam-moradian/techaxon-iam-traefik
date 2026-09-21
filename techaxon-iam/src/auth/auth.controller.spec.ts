@@ -12,6 +12,11 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 
 describe('AuthController', () => {
+  const publicIamHost = process.env.TEST_PUBLIC_IAM_HOST ?? 'localhost:3000';
+  const publicFrontendUrl =
+    process.env.TEST_PUBLIC_FRONTEND_URL ?? 'http://localhost:3001';
+  const publicRedirectUri = `${publicFrontendUrl}/callback`;
+
   let controller: AuthController;
   let authService: AuthService;
 
@@ -264,6 +269,50 @@ describe('AuthController', () => {
           path: '/',
           maxAge: 30 * 24 * 60 * 60 * 1000,
         }),
+      );
+    });
+
+    it('should preserve the forwarded public origin when redirecting back to authorize', async () => {
+      const mockReq = {
+        headers: { 'user-agent': 'jest-test-agent' },
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' },
+        protocol: 'http',
+        get: jest.fn((header: string) => {
+          if (header === 'x-forwarded-proto') return 'https';
+          if (header === 'x-forwarded-host') {
+            return publicIamHost;
+          }
+          return 'localhost:3000';
+        }),
+      } as unknown as Request;
+
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn(),
+      } as unknown as Response;
+
+      mockAuthService.login.mockResolvedValue({
+        accessToken: 'access-jwt',
+        refreshToken: 'raw-refresh-token',
+        user: { id: 'user:123', email: 'test@example.com', username: 'tester' },
+      });
+
+      await controller.login(
+        {
+          email: 'test@example.com',
+          password: 'pass123',
+          clientId: 'techaxon-web',
+          redirectUri: publicRedirectUri,
+          state: 'forwarded-state',
+        },
+        mockReq,
+        mockRes,
+      );
+
+      expect(mockRes.redirect).toHaveBeenCalledWith(
+        302,
+        `${process.env.TEST_PUBLIC_IAM_URL ?? `https://${publicIamHost}`}/auth/authorize?client_id=techaxon-web&redirect_uri=${encodeURIComponent(publicRedirectUri)}&state=forwarded-state&response_type=code`,
       );
     });
   });

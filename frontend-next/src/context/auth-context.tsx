@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 
@@ -63,21 +63,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [clientId] = useState<string>("techaxon-web");
-  const [iamBaseUrl, setIamBaseUrlState] = useState<string>("http://localhost:3000");
-
-  // Load saved IAM Base URL on mount
-  useEffect(() => {
-    const savedUrl = localStorage.getItem("iamBaseUrl");
-    if (savedUrl) {
-      setIamBaseUrlState(savedUrl);
-    }
-  }, []);
+  const [iamBaseUrl, setIamBaseUrlState] = useState<string>(
+    process.env.NEXT_PUBLIC_IAM_BASE_URL || "http://localhost:3000",
+  );
 
   const clearError = () => setError(null);
 
   const setIamBaseUrl = (url: string) => {
     setIamBaseUrlState(url);
-    localStorage.setItem("iamBaseUrl", url);
   };
 
   // Fetch current user profile using access token (GET /auth/me)
@@ -156,7 +149,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const activeClientId = customClientId || clientId;
     const redirectUri = `${window.location.origin}/callback`;
-    const state = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+    const state = Math.random().toString(36).substring(2) + Date.now().toString(36);
 
     sessionStorage.setItem(STORAGE_KEYS.OIDC_STATE, state);
     sessionStorage.setItem(STORAGE_KEYS.CLIENT_ID, activeClientId);

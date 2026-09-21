@@ -12,6 +12,16 @@ async function bootstrap() {
   // Cast to NestExpressApplication to access Express MVC methods
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
+  app.use((req, res, next) => {
+    const startedAt = Date.now();
+    res.on('finish', () => {
+      console.log(
+        `[HTTP] ${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - startedAt}ms origin=${req.headers.origin ?? '-'} userAgent=${req.headers['user-agent'] ?? '-'}`,
+      );
+    });
+    next();
+  });
+
   const couchDbService = app.get(CouchDbService);
   await couchDbService.initialize();
 
@@ -29,6 +39,7 @@ async function bootstrap() {
         /^https?:\/\/.*\.techaxon\.de$/,
         /^https?:\/\/.*\.techaxon\.com$/,
         /^https?:\/\/.*\.example\.com$/,
+        /^https?:\/\/.*\.app\.github\.dev$/,
       ];
       const isAllowed = allowedPatterns.some((pattern) => pattern.test(origin));
       if (isAllowed) {
