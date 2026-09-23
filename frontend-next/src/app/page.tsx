@@ -14,7 +14,6 @@ export default function Home() {
     isLoading,
     error,
     clientId,
-    setClientId,
     iamBaseUrl,
     setIamBaseUrl,
     loginWithSSO,
@@ -78,6 +77,17 @@ export default function Home() {
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
+  const resetBrowserSession = async () => {
+    await logout();
+    localStorage.clear();
+    sessionStorage.clear();
+    document.cookie.split(";").forEach((cookie) => {
+      const name = cookie.split("=")[0].trim();
+      if (name) document.cookie = `${name}=; Max-Age=0; path=/`;
+    });
+    window.location.reload();
+  };
+
   if (isLoading) {
     return (
       <div className="flex flex-1 items-center justify-center p-8">
@@ -114,6 +124,13 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={resetBrowserSession}
+              className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-50 dark:border-amber-700 dark:text-amber-300 dark:hover:bg-amber-950/40"
+            >
+              Reset Browser Session
+            </button>
             {user ? (
               <div className="flex items-center gap-3">
                 <div className="hidden sm:flex flex-col text-right">

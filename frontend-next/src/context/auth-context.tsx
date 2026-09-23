@@ -154,7 +154,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     sessionStorage.setItem(STORAGE_KEYS.OIDC_STATE, state);
     sessionStorage.setItem(STORAGE_KEYS.CLIENT_ID, activeClientId);
 
-    const authorizeUrl = new URL(`${iamBaseUrl}/auth/authorize`);
+    const authorizeUrl = new URL(
+      `${iamBaseUrl}/auth/authorize`,
+      window.location.origin,
+    );
     authorizeUrl.searchParams.set("client_id", activeClientId);
     authorizeUrl.searchParams.set("redirect_uri", redirectUri);
     authorizeUrl.searchParams.set("response_type", "code");

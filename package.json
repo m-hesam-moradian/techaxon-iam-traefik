@@ -4,7 +4,7 @@
     "dev:docker": "docker compose up -d",
     "dev:iam": "pnpm --filter techaxon-iam start:dev",
     "dev:frontend": "pnpm --filter frontend-next dev -p 3001",
-    "dev": "docker compose up -d && concurrently -k -n \"IAM,FRONTEND\" -c \"cyan,magenta\" \"pnpm dev:iam\" \"pnpm dev:frontend\""
+    "dev": "node scripts/dev.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.4"

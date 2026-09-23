@@ -33,6 +33,10 @@ async function bootstrap() {
     origin: (origin, callback) => {
       // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
       if (!origin) return callback(null, true);
+      const configuredOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean);
       const allowedPatterns = [
         /^http:\/\/localhost:(3000|3001|8080)$/,
         /^https?:\/\/.*\.techaxon\.localhost(:[0-9]+)?$/,
@@ -41,7 +45,9 @@ async function bootstrap() {
         /^https?:\/\/.*\.example\.com$/,
         /^https?:\/\/.*\.app\.github\.dev$/,
       ];
-      const isAllowed = allowedPatterns.some((pattern) => pattern.test(origin));
+      const isAllowed =
+        configuredOrigins.includes(origin) ||
+        allowedPatterns.some((pattern) => pattern.test(origin));
       if (isAllowed) {
         callback(null, true);
       } else {
@@ -70,7 +76,7 @@ async function bootstrap() {
   app.setBaseViewsDir(join(process.cwd(), 'views'));
   app.setViewEngine('hbs');
 
-  await app.listen(process.env.PORT ?? 3000);
+  await app.listen(process.env.PORT ?? 3000, '0.0.0.0');
 }
 
 bootstrap().catch((error) => {
