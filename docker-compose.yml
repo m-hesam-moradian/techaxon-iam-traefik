@@ -60,10 +60,10 @@ services:
     image: apache/couchdb:3.5.2.1
     container_name: techaxon_couchdb
     environment:
-      - COUCHDB_USER=admin
-      - COUCHDB_PASSWORD=secret123
+      - COUCHDB_USER=${COUCHDB_USER:-admin}
+      - COUCHDB_PASSWORD=${COUCHDB_PASSWORD:?Set COUCHDB_PASSWORD in the project root .env file}
     ports:
-      - "5984:5984"
+      - "127.0.0.1:5984:5984"
     volumes:
       - couchdb_data:/opt/couchdb/data
     healthcheck:

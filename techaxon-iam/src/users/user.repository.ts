@@ -18,6 +18,8 @@ export abstract class UserRepository {
 
   abstract updateUser(id: string, user: Partial<UserDocument>): Promise<void>;
 
+  abstract deleteUser(id: string): Promise<void>;
+
   abstract claimEmail(email: string, userId: string): Promise<void>;
 
   abstract releaseEmailClaim(email: string): Promise<void>;

@@ -131,6 +131,16 @@ export class CouchDbService implements UserRepository {
     await this.db.insert(updatedUserDocument);
   }
 
+  async deleteUser(id: string): Promise<void> {
+    const document = await this.db.get(id);
+
+    if (document.type !== 'user') {
+      throw new Error(`User document with id ${id} is not a user.`);
+    }
+
+    await this.db.destroy(id, document._rev);
+  }
+
   /**
    * Reserve email address atomically.
    */

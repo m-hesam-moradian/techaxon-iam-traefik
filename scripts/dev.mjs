@@ -12,17 +12,15 @@ const iamUrl =
   (codespaceName
     ? `https://${codespaceName}-3000.${portForwardingDomain}`
     : "http://localhost:3000");
-const cookieDomain = codespaceName ? `.${portForwardingDomain}` : ".techaxon.localhost";
-
 const environment = {
   ...process.env,
   HOSTNAME: "0.0.0.0",
-  NEXT_PUBLIC_IAM_BASE_URL: "/iam",
+  NEXT_PUBLIC_IAM_BASE_URL: iamUrl,
   IAM_INTERNAL_URL: "http://127.0.0.1:3000",
   IAM_PUBLIC_URL: iamUrl,
   OIDC_WEB_REDIRECT_URI: `${frontendUrl}/callback`,
-  CORS_ALLOWED_ORIGINS: frontendUrl,
-  COOKIE_DOMAIN: cookieDomain,
+  CORS_ALLOWED_ORIGINS: `${frontendUrl},${iamUrl}`,
+  COOKIE_DOMAIN: codespaceName ? "" : process.env.COOKIE_DOMAIN ?? "",
   COOKIE_SECURE: codespaceName ? "true" : process.env.COOKIE_SECURE ?? "false",
 };
 

@@ -5,6 +5,7 @@ import { PassportModule } from '@nestjs/passport';
 import { JwtModule } from '@nestjs/jwt';
 
 import { AuthService } from './auth.service';
+import { EmailService } from './email.service';
 import { MfaService } from './mfa.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
@@ -25,6 +26,7 @@ import { CouchDbAuthCodeRepository } from './couchdb-auth-code.repository';
   controllers: [AuthController],
   providers: [
     AuthService,
+    EmailService,
     MfaService,
     JwtStrategy,
     {

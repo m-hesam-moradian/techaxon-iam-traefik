@@ -16,6 +16,7 @@ import {
   BadRequestException,
   HttpException,
   UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import type { ConfigType } from '@nestjs/config';
@@ -82,6 +83,8 @@ export class AuthController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
+    this.assertTrustedLoginOrigin(req);
+
     const userAgent = req.headers['user-agent'];
     const ipAddress = req.ip ?? req.socket.remoteAddress;
 
@@ -123,8 +126,7 @@ export class AuthController {
    */
   private setRefreshTokenCookie(res: Response, refreshToken: string): void {
     const refreshExpiresInMs = this.authService.getRefreshTokenExpiresInMs();
-    const domain =
-      this.cookieConfiguration?.domain ?? process.env.COOKIE_DOMAIN ?? '.techaxon.localhost';
+    const domain = this.cookieConfiguration?.domain ?? process.env.COOKIE_DOMAIN;
     const secure = this.cookieConfiguration?.secure ?? process.env.NODE_ENV === 'production';
     const sameSite = this.cookieConfiguration?.sameSite ?? 'lax';
     const httpOnly = this.cookieConfiguration?.httpOnly ?? true;
@@ -134,15 +136,14 @@ export class AuthController {
       httpOnly,
       secure,
       sameSite,
-      domain,
+      ...(domain ? { domain } : {}),
       path,
       maxAge: refreshExpiresInMs,
     });
   }
 
   private clearRefreshTokenCookie(res: Response): void {
-    const domain =
-      this.cookieConfiguration?.domain ?? process.env.COOKIE_DOMAIN ?? '.techaxon.localhost';
+    const domain = this.cookieConfiguration?.domain ?? process.env.COOKIE_DOMAIN;
     const secure = this.cookieConfiguration?.secure ?? process.env.NODE_ENV === 'production';
     const sameSite = this.cookieConfiguration?.sameSite ?? 'lax';
     const httpOnly = this.cookieConfiguration?.httpOnly ?? true;
@@ -152,9 +153,29 @@ export class AuthController {
       httpOnly,
       secure,
       sameSite,
-      domain,
+      ...(domain ? { domain } : {}),
       path,
     });
+  }
+
+  private assertTrustedLoginOrigin(req: Request): void {
+    const origin = req.headers.origin;
+    if (!origin) return;
+
+    const allowedOrigins = new Set(
+      (process.env.CORS_ALLOWED_ORIGINS ?? '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean),
+    );
+    const publicIamUrl = process.env.IAM_PUBLIC_URL;
+    if (publicIamUrl) {
+      allowedOrigins.add(new URL(publicIamUrl).origin);
+    }
+
+    if (!allowedOrigins.has(origin)) {
+      throw new ForbiddenException('Login request origin is not allowed');
+    }
   }
 
   private buildAuthorizeUrl(

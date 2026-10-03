@@ -5,7 +5,7 @@ jest.mock('uuid', () => ({
 }));
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import type { Request, Response } from 'express';
 
 import { AuthController } from './auth.controller';
@@ -404,6 +404,67 @@ describe('AuthController', () => {
   // ─────────────────────────────────────────────────────────────────────────
 
   describe('POST /auth/login — SSO cookie', () => {
+    it('should allow a login request from an exact configured origin', async () => {
+      const previousOrigins = process.env.CORS_ALLOWED_ORIGINS;
+      process.env.CORS_ALLOWED_ORIGINS = publicFrontendUrl;
+
+      try {
+        const mockReq = {
+          headers: { origin: publicFrontendUrl },
+          ip: '127.0.0.1',
+          socket: { remoteAddress: '127.0.0.1' },
+        } as unknown as Request;
+        const mockRes = { json: jest.fn() } as unknown as Response;
+        mockAuthService.login.mockResolvedValue({ accessToken: 'access-jwt' });
+
+        await controller.login(
+          { email: 'test@example.com', password: 'pass123' },
+          mockReq,
+          mockRes,
+        );
+
+        expect(authService.login).toHaveBeenCalled();
+      } finally {
+        if (previousOrigins === undefined) {
+          delete process.env.CORS_ALLOWED_ORIGINS;
+        } else {
+          process.env.CORS_ALLOWED_ORIGINS = previousOrigins;
+        }
+      }
+    });
+
+    it('should reject an untrusted login origin before authenticating', async () => {
+      const previousOrigins = process.env.CORS_ALLOWED_ORIGINS;
+      const previousIamUrl = process.env.IAM_PUBLIC_URL;
+      process.env.CORS_ALLOWED_ORIGINS = publicFrontendUrl;
+      process.env.IAM_PUBLIC_URL = `https://${publicIamHost}`;
+
+      try {
+        const mockReq = {
+          headers: { origin: 'https://attacker.example' },
+          ip: '127.0.0.1',
+          socket: { remoteAddress: '127.0.0.1' },
+        } as unknown as Request;
+        const mockRes = { json: jest.fn() } as unknown as Response;
+
+        await expect(
+          controller.login({ email: 'test@example.com', password: 'pass123' }, mockReq, mockRes),
+        ).rejects.toThrow(ForbiddenException);
+        expect(authService.login).not.toHaveBeenCalled();
+      } finally {
+        if (previousOrigins === undefined) {
+          delete process.env.CORS_ALLOWED_ORIGINS;
+        } else {
+          process.env.CORS_ALLOWED_ORIGINS = previousOrigins;
+        }
+        if (previousIamUrl === undefined) {
+          delete process.env.IAM_PUBLIC_URL;
+        } else {
+          process.env.IAM_PUBLIC_URL = previousIamUrl;
+        }
+      }
+    });
+
     /**
      * Test:
      * On a successful login the techaxon_refresh_token cookie is set

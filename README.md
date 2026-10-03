@@ -54,8 +54,14 @@ Make sure the following are installed:
 From the project root:
 
 ```bash
+cp .env.example .env
+cp techaxon-iam/.env.example techaxon-iam/.env
 pnpm dev
 ```
+
+Before starting, replace `replace-with-a-unique-local-password` in both `.env` files with the same unique local CouchDB password. The CouchDB port is published on `127.0.0.1` only and is not exposed to other network interfaces.
+
+Account registration also requires SMTP settings in `techaxon-iam/.env`: `SMTP_HOST`, `SMTP_FROM`, and, when authentication is required, both `SMTP_USER` and `SMTP_PASSWORD`. Set `SMTP_PORT` and `SMTP_SECURE` for your provider. The `pnpm dev` launcher supplies `IAM_PUBLIC_URL`; configure it to the public HTTPS IAM URL in production. Registration sends the verification link by email and does not return the token in the API response. If email delivery fails, the pending user and email claim are rolled back.
 
 This starts CouchDB, Redis, and Traefik in Docker, waits for CouchDB to become healthy, then runs the IAM API and Next.js frontend directly on the host. Their logs appear together in the terminal.
 

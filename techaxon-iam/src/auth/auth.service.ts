@@ -8,6 +8,7 @@ import {
   ConflictException,
   UnauthorizedException,
   InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import * as bcrypt from 'bcryptjs';
@@ -18,6 +19,7 @@ import { SessionService } from '../sessions/session.service';
 import { TokenService } from './token.service';
 import { AuthCodeRepository } from './auth-code.repository';
 import { MfaService } from './mfa.service';
+import { EmailService } from './email.service';
 import jwtConfig from '../config/jwt.config';
 import clientsConfig from '../config/clients.config';
 
@@ -31,12 +33,15 @@ import type { JwtPayload } from './interfaces/jwt-payload.interface';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly userRepo: UserRepository,
     private readonly sessionService: SessionService,
     private readonly tokenService: TokenService,
     private readonly authCodeRepo: AuthCodeRepository,
     private readonly mfaService: MfaService,
+    private readonly emailService: EmailService,
     @Optional()
     @Inject(jwtConfig.KEY)
     private readonly jwtConfiguration?: ConfigType<typeof jwtConfig>,
@@ -78,6 +83,7 @@ export class AuthService {
     }
 
     // 3. Create User Document with Safe Cleanup Rollback
+    let createdUserId: string | undefined;
     try {
       const passwordHash = await bcrypt.hash(dto.password, 10);
       const now = new Date().toISOString();
@@ -96,6 +102,7 @@ export class AuthService {
       };
 
       const response = await this.userRepo.createUser(newUser);
+      createdUserId = response.id;
 
       const verificationPayload: JwtPayload = {
         sub: response.id,
@@ -105,18 +112,46 @@ export class AuthService {
 
       const verificationToken = this.tokenService.generateVerificationToken(verificationPayload);
 
+      await this.emailService.sendVerificationEmail(email, verificationToken);
+
       return {
         success: true,
         id: response.id,
-        verificationToken,
+        message: 'Registration successful. Please check your email to verify your account.',
       };
     } catch (error) {
-      // 🛡️ پاک‌سازی ایمن: حتی اگر releaseEmailClaim خطا بدهد، برنامه کرش نکرده و خطای اصلی ثبت‌نام Throw می‌شود
-      await this.userRepo.releaseEmailClaim(email).catch(() => {
-        // لوگ کردن خطای پاک‌سازی برای بررسی‌های بعدی سیستم
-      });
+      let cleanupFailed = false;
 
-      // اگر خطا از نوع Conflict نباشد، خطای صریح ۵۰۰ یا عمومی می‌دهیم
+      if (createdUserId) {
+        try {
+          await this.userRepo.deleteUser(createdUserId);
+        } catch (rollbackError) {
+          cleanupFailed = true;
+          this.logger.error(
+            'Failed to remove pending user after registration failure',
+            rollbackError instanceof Error ? rollbackError.stack : String(rollbackError),
+          );
+        }
+      }
+
+      if (!cleanupFailed) {
+        try {
+          await this.userRepo.releaseEmailClaim(email);
+        } catch (rollbackError) {
+          cleanupFailed = true;
+          this.logger.error(
+            'Failed to release email claim after registration failure',
+            rollbackError instanceof Error ? rollbackError.stack : String(rollbackError),
+          );
+        }
+      }
+
+      if (cleanupFailed) {
+        throw new InternalServerErrorException(
+          'Registration failed and cleanup was incomplete. Please contact support.',
+        );
+      }
+
       if (error instanceof ConflictException) {
         throw error;
       }
@@ -479,11 +514,17 @@ export class AuthService {
       return null;
     }
 
-    if (session.userId && session.userId !== payload.sub) {
+    if (session.userId !== payload.sub) {
       return null;
     }
 
     if (new Date(session.expiresAt) < new Date()) {
+      return null;
+    }
+
+    const isCurrentToken = await bcrypt.compare(cookie, session.refreshTokenHash);
+    if (!isCurrentToken) {
+      await this.sessionService.revokeAllUserSessions(payload.sub);
       return null;
     }
 
