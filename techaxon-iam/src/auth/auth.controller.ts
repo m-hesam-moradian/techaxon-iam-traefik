@@ -15,6 +15,7 @@ import {
   Optional,
   BadRequestException,
   HttpException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import type { ConfigType } from '@nestjs/config';
@@ -24,7 +25,6 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
-import { LogoutDto } from './dto/logout.dto';
 import { AuthorizeQueryDto } from './dto/authorize-query.dto';
 import { TokenExchangeDto } from './dto/token-exchange.dto';
 import { MfaEnableDto } from './dto/mfa-enable.dto';
@@ -140,6 +140,23 @@ export class AuthController {
     });
   }
 
+  private clearRefreshTokenCookie(res: Response): void {
+    const domain =
+      this.cookieConfiguration?.domain ?? process.env.COOKIE_DOMAIN ?? '.techaxon.localhost';
+    const secure = this.cookieConfiguration?.secure ?? process.env.NODE_ENV === 'production';
+    const sameSite = this.cookieConfiguration?.sameSite ?? 'lax';
+    const httpOnly = this.cookieConfiguration?.httpOnly ?? true;
+    const path = this.cookieConfiguration?.path ?? '/';
+
+    res.clearCookie('techaxon_refresh_token', {
+      httpOnly,
+      secure,
+      sameSite,
+      domain,
+      path,
+    });
+  }
+
   private buildAuthorizeUrl(
     req: Request,
     clientId: string,
@@ -157,6 +174,14 @@ export class AuthController {
     if (state) authorizeUrl.searchParams.set('state', state);
     authorizeUrl.searchParams.set('response_type', 'code');
     return authorizeUrl.toString();
+  }
+
+  @Get('client-config')
+  getClientConfig(@Query('client_id') clientId: string) {
+    return {
+      clientId,
+      redirectUri: this.authService.getClientRedirectUri(clientId),
+    };
   }
 
   /**
@@ -236,8 +261,28 @@ export class AuthController {
    */
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  async refresh(@Body() dto: RefreshTokenDto) {
-    return await this.authService.refreshToken(dto.refreshToken);
+  async refresh(@Body() dto: RefreshTokenDto, @Req() req: Request, @Res() res: Response) {
+    const cookieToken = req.cookies?.techaxon_refresh_token as string | undefined;
+    const refreshToken = cookieToken ?? dto.refreshToken;
+
+    if (!refreshToken) {
+      throw new UnauthorizedException('Refresh token is required');
+    }
+
+    try {
+      const result = await this.authService.refreshToken(refreshToken);
+      if (cookieToken) {
+        this.setRefreshTokenCookie(res, result.refreshToken);
+        return res.json({ accessToken: result.accessToken });
+      }
+
+      return res.json(result);
+    } catch (error: unknown) {
+      if (cookieToken) {
+        this.clearRefreshTokenCookie(res);
+      }
+      throw error;
+    }
   }
 
   /**
@@ -249,8 +294,10 @@ export class AuthController {
   @Post('logout')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
-  async logout(@Body() dto: LogoutDto) {
-    return await this.authService.logout(dto.sessionId);
+  async logout(@Req() req: Request & { user: AuthenticatedUser }, @Res() res: Response) {
+    const result = await this.authService.logout(req.user.sessionId);
+    this.clearRefreshTokenCookie(res);
+    return res.json(result);
   }
 
   /**
@@ -267,8 +314,17 @@ export class AuthController {
    */
   @Post('token')
   @HttpCode(HttpStatus.OK)
-  async token(@Body() dto: TokenExchangeDto) {
-    return await this.authService.exchangeAuthCode(dto);
+  async token(@Body() dto: TokenExchangeDto, @Res() res: Response) {
+    const result = await this.authService.exchangeAuthCode(dto);
+    if (dto.client_id === 'techaxon-web') {
+      this.setRefreshTokenCookie(res, result.refresh_token);
+      return res.json({
+        access_token: result.access_token,
+        token_type: result.token_type,
+        expires_in: result.expires_in,
+      });
+    }
+    return res.json(result);
   }
 
   // =========================================================================
@@ -381,6 +437,12 @@ export class AuthController {
     }
 
     this.setRefreshTokenCookie(res, result.refreshToken);
+    if (req.headers['x-auth-client'] === 'techaxon-web') {
+      return res.json({
+        accessToken: result.accessToken,
+        user: result.user,
+      });
+    }
 
     if (dto.clientId && dto.redirectUri) {
       res.redirect(

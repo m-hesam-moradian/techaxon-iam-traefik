@@ -29,8 +29,10 @@ describe('AuthController', () => {
     logout: jest.fn(),
     mfaAuthenticate: jest.fn(),
     validateClientRedirectUri: jest.fn().mockResolvedValue(true),
+    getClientRedirectUri: jest.fn(),
     validateRefreshTokenCookie: jest.fn(),
     generateAuthorizationCode: jest.fn(),
+    exchangeAuthCode: jest.fn(),
     getRefreshTokenExpiresInMs: jest.fn().mockReturnValue(30 * 24 * 60 * 60 * 1000),
   };
 
@@ -51,6 +53,152 @@ describe('AuthController', () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+  });
+
+  describe('GET /auth/client-config', () => {
+    it('returns the server-configured callback URI', () => {
+      mockAuthService.getClientRedirectUri.mockReturnValue(publicRedirectUri);
+
+      expect(controller.getClientConfig('techaxon-web')).toEqual({
+        clientId: 'techaxon-web',
+        redirectUri: publicRedirectUri,
+      });
+      expect(authService.getClientRedirectUri).toHaveBeenCalledWith('techaxon-web');
+    });
+  });
+
+  describe('POST /auth/token', () => {
+    it('sets the web refresh cookie without returning the refresh token in JSON', async () => {
+      const result = {
+        access_token: 'access-token',
+        token_type: 'Bearer' as const,
+        expires_in: 900,
+        refresh_token: 'refresh-token',
+      };
+      const dto = {
+        grant_type: 'authorization_code' as const,
+        code: 'auth-code',
+        client_id: 'techaxon-web',
+        redirect_uri: publicRedirectUri,
+      };
+      const mockRes = {
+        cookie: jest.fn(),
+        json: jest.fn(),
+      } as unknown as Response;
+      mockAuthService.exchangeAuthCode.mockResolvedValue(result);
+
+      await controller.token(dto, mockRes);
+
+      expect(mockRes.cookie).toHaveBeenCalledWith(
+        'techaxon_refresh_token',
+        'refresh-token',
+        expect.any(Object),
+      );
+      expect(mockRes.json).toHaveBeenCalledWith({
+        access_token: 'access-token',
+        token_type: 'Bearer',
+        expires_in: 900,
+      });
+    });
+
+    it('keeps token-body responses for non-web clients', async () => {
+      const result = {
+        access_token: 'access-token',
+        token_type: 'Bearer' as const,
+        expires_in: 900,
+        refresh_token: 'refresh-token',
+      };
+      const mockRes = {
+        cookie: jest.fn(),
+        json: jest.fn(),
+      } as unknown as Response;
+      mockAuthService.exchangeAuthCode.mockResolvedValue(result);
+
+      await controller.token(
+        {
+          grant_type: 'authorization_code',
+          code: 'auth-code',
+          client_id: 'techaxon-app',
+          redirect_uri: 'http://localhost:3000/callback',
+        },
+        mockRes,
+      );
+
+      expect(mockRes.cookie).not.toHaveBeenCalled();
+      expect(mockRes.json).toHaveBeenCalledWith(result);
+    });
+  });
+
+  describe('POST /auth/refresh', () => {
+    it('rotates an HttpOnly cookie token without returning it in JSON', async () => {
+      const mockReq = {
+        cookies: { techaxon_refresh_token: 'old-refresh-token' },
+      } as unknown as Request;
+      const mockRes = {
+        cookie: jest.fn(),
+        json: jest.fn(),
+      } as unknown as Response;
+      mockAuthService.refreshToken.mockResolvedValue({
+        accessToken: 'new-access-token',
+        refreshToken: 'new-refresh-token',
+      });
+
+      await controller.refresh({}, mockReq, mockRes);
+
+      expect(authService.refreshToken).toHaveBeenCalledWith('old-refresh-token');
+      expect(mockRes.cookie).toHaveBeenCalledWith(
+        'techaxon_refresh_token',
+        'new-refresh-token',
+        expect.any(Object),
+      );
+      expect(mockRes.json).toHaveBeenCalledWith({
+        accessToken: 'new-access-token',
+      });
+    });
+
+    it('keeps token-body responses for mobile/API clients', async () => {
+      const result = {
+        accessToken: 'new-access-token',
+        refreshToken: 'new-refresh-token',
+      };
+      const mockRes = {
+        cookie: jest.fn(),
+        json: jest.fn(),
+      } as unknown as Response;
+      mockAuthService.refreshToken.mockResolvedValue(result);
+
+      await controller.refresh(
+        { refreshToken: 'old-refresh-token' },
+        { cookies: {} } as unknown as Request,
+        mockRes,
+      );
+
+      expect(authService.refreshToken).toHaveBeenCalledWith('old-refresh-token');
+      expect(mockRes.cookie).not.toHaveBeenCalled();
+      expect(mockRes.json).toHaveBeenCalledWith(result);
+    });
+  });
+
+  describe('POST /auth/logout', () => {
+    it('revokes the authenticated session and clears the refresh cookie', async () => {
+      const mockReq = {
+        user: { userId: 'user:123', sessionId: 'session:123' },
+      } as unknown as Request & { user: { userId: string; sessionId: string } };
+      const mockRes = {
+        clearCookie: jest.fn(),
+        json: jest.fn(),
+      } as unknown as Response;
+      mockAuthService.logout.mockResolvedValue({ success: true });
+
+      await controller.logout(mockReq, mockRes);
+
+      expect(authService.logout).toHaveBeenCalledWith('session:123');
+      expect(mockRes.clearCookie).toHaveBeenCalledWith(
+        'techaxon_refresh_token',
+        expect.any(Object),
+      );
+      expect(mockRes.json).toHaveBeenCalledWith({ success: true });
+    });
   });
 
   describe('GET /auth/me', () => {
@@ -208,6 +356,7 @@ describe('AuthController', () => {
       expect(authService.generateAuthorizationCode).toHaveBeenCalledWith(
         'user:abc-123',
         queryDto.client_id,
+        queryDto.redirect_uri,
       );
       expect(mockRes.redirect).toHaveBeenCalledWith(
         302,
@@ -339,7 +488,7 @@ describe('AuthController', () => {
   });
 
   describe('MFA login challenge', () => {
-    it('should render the MFA challenge for an OIDC login', async () => {
+    it('should render the MFA challenge for an OAuth 2.0 login', async () => {
       const mockReq = {
         headers: { 'user-agent': 'jest-test-agent' },
         ip: '127.0.0.1',
@@ -376,7 +525,7 @@ describe('AuthController', () => {
       expect(mockRes.cookie).not.toHaveBeenCalled();
     });
 
-    it('should redirect to authorize after valid MFA for an OIDC login', async () => {
+    it('should redirect to authorize after valid MFA for an OAuth 2.0 login', async () => {
       const mockReq = {
         headers: { 'user-agent': 'jest-test-agent' },
         ip: '127.0.0.1',
@@ -434,6 +583,37 @@ describe('AuthController', () => {
         302,
         `https://public-iam.app.github.dev/auth/authorize?client_id=techaxon-web&redirect_uri=${encodeURIComponent(publicRedirectUri)}&state=mfa-state&response_type=code`,
       );
+    });
+
+    it('should return only the access token for web MFA API calls', async () => {
+      const mockReq = {
+        headers: { 'x-auth-client': 'techaxon-web' },
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' },
+      } as unknown as Request;
+      const mockRes = {
+        cookie: jest.fn(),
+        json: jest.fn(),
+      } as unknown as Response;
+      mockAuthService.mfaAuthenticate.mockResolvedValue({
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+      });
+
+      await controller.mfaAuthenticate(
+        { mfa_token: 'challenge-token', code: '123456' },
+        mockReq,
+        mockRes,
+      );
+
+      expect(mockRes.cookie).toHaveBeenCalledWith(
+        'techaxon_refresh_token',
+        'refresh-token',
+        expect.any(Object),
+      );
+      expect(mockRes.json).toHaveBeenCalledWith({
+        accessToken: 'access-token',
+      });
     });
 
     it('should re-render the MFA challenge with an invalid-code error for browser login', async () => {

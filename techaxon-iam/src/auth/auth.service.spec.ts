@@ -4,7 +4,7 @@ jest.mock('uuid', () => ({
   v7: () => 'mocked-uuid-v7-string',
 }));
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 
 import { AuthService } from './auth.service';
@@ -66,6 +66,7 @@ describe('AuthService', () => {
         clientId: 'test-client',
         clientName: 'Test Client Application',
         allowedRedirectUris: ['https://app.example.com/callback', 'http://localhost:3000/callback'],
+        defaultRedirectUri: 'https://app.example.com/callback',
       },
     },
   };
@@ -132,6 +133,20 @@ describe('AuthService', () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+  });
+
+  describe('getClientRedirectUri', () => {
+    it('returns the registered default redirect URI for a client', () => {
+      expect(authService.getClientRedirectUri('test-client')).toBe(
+        'https://app.example.com/callback',
+      );
+    });
+
+    it('rejects a client without a registered default redirect URI', () => {
+      expect(() => authService.getClientRedirectUri('unknown-client')).toThrow(
+        BadRequestException,
+      );
+    });
   });
 
   describe('getProfile', () => {

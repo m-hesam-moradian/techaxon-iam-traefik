@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 
 export interface UserProfile {
   id: string;
@@ -13,13 +13,11 @@ export interface TokenResponse {
   access_token: string;
   token_type: string;
   expires_in: number;
-  refresh_token: string;
 }
 
 interface AuthContextType {
   user: UserProfile | null;
   accessToken: string | null;
-  refreshToken: string | null;
   expiresIn: number | null;
   tokenExpiresAt: number | null;
   isLoading: boolean;
@@ -27,7 +25,7 @@ interface AuthContextType {
   clientId: string;
   iamBaseUrl: string;
   setIamBaseUrl: (url: string) => void;
-  loginWithSSO: (customClientId?: string) => void;
+  loginWithSSO: (customClientId?: string) => Promise<void>;
   exchangeCode: (code: string, returnedState: string) => Promise<boolean>;
   refreshAccessToken: () => Promise<boolean>;
   fetchUserProfile: (token?: string) => Promise<UserProfile | null>;
@@ -44,25 +42,23 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const STORAGE_KEYS = {
-  ACCESS_TOKEN: "techaxon_access_token",
-  REFRESH_TOKEN: "techaxon_refresh_token",
-  USER: "techaxon_user_profile",
-  EXPIRES_AT: "techaxon_token_expires_at",
   CLIENT_ID: "techaxon_client_id",
-  OIDC_STATE: "techaxon_oidc_state",
+  OAUTH_STATE: "techaxon_oauth_state",
+  REDIRECT_URI: "techaxon_redirect_uri",
 };
 
-
+const getTokenExpiresAt = (expiresIn: number): number =>
+  Date.now() + expiresIn * 1000;
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [refreshToken, setRefreshToken] = useState<string | null>(null);
   const [expiresIn, setExpiresIn] = useState<number | null>(null);
   const [tokenExpiresAt, setTokenExpiresAt] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [clientId] = useState<string>("techaxon-web");
+  const restoreAttempted = useRef(false);
   const [iamBaseUrl, setIamBaseUrlState] = useState<string>(
     process.env.NEXT_PUBLIC_IAM_BASE_URL || "http://localhost:3000",
   );
@@ -102,7 +98,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           mfaEnabled: Boolean(data.mfa?.enabled || data.mfaEnabled),
         };
         setUser(profile);
-        localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(profile));
         return profile;
       } catch (err) {
         console.error("Failed to fetch user profile:", err);
@@ -112,58 +107,93 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [accessToken, iamBaseUrl]
   );
 
-  // Initialize state from localStorage on initial client mount
+  // Restore the in-memory access token from the HttpOnly refresh cookie.
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (restoreAttempted.current) return;
+    restoreAttempted.current = true;
 
-    try {
-      const savedAccessToken = localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN);
-      const savedRefreshToken = localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN);
-      const savedUser = localStorage.getItem(STORAGE_KEYS.USER);
-      const savedExpiresAt = localStorage.getItem(STORAGE_KEYS.EXPIRES_AT);
-
-      if (savedAccessToken) {
-        setAccessToken(savedAccessToken);
-        setRefreshToken(savedRefreshToken);
-
-        if (savedExpiresAt) {
-          setTokenExpiresAt(parseInt(savedExpiresAt, 10));
+    const restoreSession = async () => {
+      try {
+        try {
+          localStorage.removeItem("techaxon_access_token");
+          localStorage.removeItem("techaxon_refresh_token");
+          localStorage.removeItem("techaxon_user_profile");
+          localStorage.removeItem("techaxon_token_expires_at");
+        } catch (cleanupError) {
+          console.warn("Could not remove legacy browser auth storage:", cleanupError);
         }
 
-        if (savedUser) {
-          setUser(JSON.parse(savedUser));
+        const res = await fetch(`${iamBaseUrl}/auth/refresh`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({}),
+        });
+
+        if (res.status === 401) return;
+        if (!res.ok) {
+          throw new Error(`Session restoration failed with status ${res.status}`);
         }
 
-        fetchUserProfile(savedAccessToken);
+        const data = await res.json();
+        const restoredAccessToken = data.accessToken || data.access_token;
+        if (!restoredAccessToken) {
+          throw new Error("Session restoration response did not include an access token");
+        }
+
+        const restoredExpiresIn = data.expires_in || 900;
+        setAccessToken(restoredAccessToken);
+        setExpiresIn(restoredExpiresIn);
+        setTokenExpiresAt(Date.now() + restoredExpiresIn * 1000);
+        await fetchUserProfile(restoredAccessToken);
+      } catch (restoreError) {
+        console.error("Failed to restore authentication session:", restoreError);
+      } finally {
+        setIsLoading(false);
       }
-    } catch (e) {
-      console.error("Error hydrating auth state:", e);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [fetchUserProfile]);
+    };
 
-  // Initiate OIDC Authorization Code Flow (Redirect to IAM /auth/authorize)
-  const loginWithSSO = (customClientId?: string) => {
+    void restoreSession();
+  }, [fetchUserProfile, iamBaseUrl]);
+
+  // Initiate the OAuth 2.0 Authorization Code flow using IAM's registered callback.
+  const loginWithSSO = async (customClientId?: string): Promise<void> => {
     if (typeof window === "undefined") return;
 
     const activeClientId = customClientId || clientId;
-    const redirectUri = `${window.location.origin}/callback`;
-    const state = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    setError(null);
 
-    sessionStorage.setItem(STORAGE_KEYS.OIDC_STATE, state);
-    sessionStorage.setItem(STORAGE_KEYS.CLIENT_ID, activeClientId);
+    try {
+      const configUrl = new URL(`${iamBaseUrl}/auth/client-config`, window.location.origin);
+      configUrl.searchParams.set("client_id", activeClientId);
+      const configResponse = await fetch(configUrl, { credentials: "include" });
+      if (!configResponse.ok) {
+        throw new Error(`IAM client configuration failed with status ${configResponse.status}`);
+      }
 
-    const authorizeUrl = new URL(
-      `${iamBaseUrl}/auth/authorize`,
-      window.location.origin,
-    );
-    authorizeUrl.searchParams.set("client_id", activeClientId);
-    authorizeUrl.searchParams.set("redirect_uri", redirectUri);
-    authorizeUrl.searchParams.set("response_type", "code");
-    authorizeUrl.searchParams.set("state", state);
+      const { redirectUri } = await configResponse.json();
+      if (typeof redirectUri !== "string" || !redirectUri) {
+        throw new Error("IAM did not return a registered callback URI");
+      }
 
-    window.location.href = authorizeUrl.toString();
+      const state = crypto.randomUUID();
+      sessionStorage.setItem(STORAGE_KEYS.OAUTH_STATE, state);
+      sessionStorage.setItem(STORAGE_KEYS.CLIENT_ID, activeClientId);
+      sessionStorage.setItem(STORAGE_KEYS.REDIRECT_URI, redirectUri);
+
+      const authorizeUrl = new URL(
+        `${iamBaseUrl}/auth/authorize`,
+        window.location.origin,
+      );
+      authorizeUrl.searchParams.set("client_id", activeClientId);
+      authorizeUrl.searchParams.set("redirect_uri", redirectUri);
+      authorizeUrl.searchParams.set("response_type", "code");
+      authorizeUrl.searchParams.set("state", state);
+
+      window.location.href = authorizeUrl.toString();
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : "Failed to start sign-in");
+    }
   };
 
   // Exchange authorization code for tokens (POST /auth/token)
@@ -172,16 +202,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null);
 
     try {
-      const savedState = sessionStorage.getItem(STORAGE_KEYS.OIDC_STATE);
+      const savedState = sessionStorage.getItem(STORAGE_KEYS.OAUTH_STATE);
       const savedClientId = sessionStorage.getItem(STORAGE_KEYS.CLIENT_ID) || clientId;
-      const redirectUri = `${window.location.origin}/callback`;
+      const redirectUri = sessionStorage.getItem(STORAGE_KEYS.REDIRECT_URI);
 
-      if (savedState && returnedState !== savedState) {
+      if (!savedState || returnedState !== savedState) {
         throw new Error("CSRF State mismatch detected. Authorization aborted.");
+      }
+      if (!redirectUri) {
+        throw new Error("The registered callback URI is missing. Please sign in again.");
       }
 
       const res = await fetch(`${iamBaseUrl}/auth/token`, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -204,16 +238,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const expiresAtTimestamp = Date.now() + (data.expires_in || 900) * 1000;
 
       setAccessToken(data.access_token);
-      setRefreshToken(data.refresh_token);
       setExpiresIn(data.expires_in);
       setTokenExpiresAt(expiresAtTimestamp);
 
-      localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.access_token);
-      localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refresh_token);
-      localStorage.setItem(STORAGE_KEYS.EXPIRES_AT, expiresAtTimestamp.toString());
-
       await fetchUserProfile(data.access_token);
-      sessionStorage.removeItem(STORAGE_KEYS.OIDC_STATE);
+      sessionStorage.removeItem(STORAGE_KEYS.OAUTH_STATE);
+      sessionStorage.removeItem(STORAGE_KEYS.CLIENT_ID);
+      sessionStorage.removeItem(STORAGE_KEYS.REDIRECT_URI);
 
       return true;
     } catch (err: unknown) {
@@ -227,20 +258,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Refresh access token (POST /auth/refresh)
   const refreshAccessToken = async (): Promise<boolean> => {
-    if (!refreshToken) {
-      setError("No refresh token available");
-      return false;
-    }
-
     try {
       const res = await fetch(`${iamBaseUrl}/auth/refresh`, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          refreshToken,
-        }),
+        body: JSON.stringify({}),
       });
 
       if (!res.ok) {
@@ -249,12 +274,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const data = await res.json();
       const newAccessToken = data.accessToken || data.access_token;
-      const expiresAtTimestamp = Date.now() + 15 * 60 * 1000;
+      const refreshedExpiresIn = data.expires_in || 15 * 60;
+      const expiresAtTimestamp = getTokenExpiresAt(refreshedExpiresIn);
 
       setAccessToken(newAccessToken);
+      setExpiresIn(refreshedExpiresIn);
       setTokenExpiresAt(expiresAtTimestamp);
-      localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, newAccessToken);
-      localStorage.setItem(STORAGE_KEYS.EXPIRES_AT, expiresAtTimestamp.toString());
 
       await fetchUserProfile(newAccessToken);
       return true;
@@ -371,8 +396,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const res = await fetch(`${iamBaseUrl}/auth/mfa/authenticate`, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
+          "X-Auth-Client": clientId,
         },
         body: JSON.stringify({
           mfa_token: mfaToken,
@@ -390,12 +417,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const expiresAtTimestamp = Date.now() + 15 * 60 * 1000;
 
       setAccessToken(data.accessToken);
-      setRefreshToken(data.refreshToken);
       setTokenExpiresAt(expiresAtTimestamp);
-
-      localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, data.accessToken);
-      localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refreshToken);
-      localStorage.setItem(STORAGE_KEYS.EXPIRES_AT, expiresAtTimestamp.toString());
 
       if (data.user) {
         const profile: UserProfile = {
@@ -405,7 +427,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           mfaEnabled: true,
         };
         setUser(profile);
-        localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(profile));
       } else {
         await fetchUserProfile(data.accessToken);
       }
@@ -424,25 +445,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = async () => {
     try {
       if (accessToken) {
-        await fetch(`${iamBaseUrl}/auth/logout`, {
+        const res = await fetch(`${iamBaseUrl}/auth/logout`, {
           method: "POST",
+          credentials: "include",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${accessToken}`,
           },
           body: JSON.stringify({}),
-        }).catch(() => {});
+        });
+        if (!res.ok) {
+          throw new Error(`Logout failed with status ${res.status}`);
+        }
       }
+    } catch (logoutError) {
+      setError(logoutError instanceof Error ? logoutError.message : "Logout failed");
     } finally {
       setUser(null);
       setAccessToken(null);
-      setRefreshToken(null);
       setExpiresIn(null);
       setTokenExpiresAt(null);
-      localStorage.removeItem(STORAGE_KEYS.ACCESS_TOKEN);
-      localStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
-      localStorage.removeItem(STORAGE_KEYS.USER);
-      localStorage.removeItem(STORAGE_KEYS.EXPIRES_AT);
     }
   };
 
@@ -451,7 +473,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         user,
         accessToken,
-        refreshToken,
         expiresIn,
         tokenExpiresAt,
         isLoading,

@@ -6,12 +6,14 @@ export interface RegisteredClient {
   clientId: string;
   clientName: string;
   allowedRedirectUris: string[];
+  defaultRedirectUri?: string;
 }
 
 export const DEFAULT_CLIENTS: Record<string, RegisteredClient> = {
   'techaxon-lms': {
     clientId: 'techaxon-lms',
     clientName: 'TechAxon LMS',
+    defaultRedirectUri: 'https://lms.techaxon.de/auth/callback',
     allowedRedirectUris: [
       'https://lms.techaxon.de/auth/callback',
       'https://lms.techaxon.localhost/auth/callback',
@@ -22,6 +24,7 @@ export const DEFAULT_CLIENTS: Record<string, RegisteredClient> = {
   'techaxon-kanban': {
     clientId: 'techaxon-kanban',
     clientName: 'TechAxon Kanban',
+    defaultRedirectUri: 'https://kanban.techaxon.de/auth/callback',
     allowedRedirectUris: [
       'https://kanban.techaxon.de/auth/callback',
       'https://kanban.techaxon.localhost/auth/callback',
@@ -32,6 +35,7 @@ export const DEFAULT_CLIENTS: Record<string, RegisteredClient> = {
   'techaxon-shop': {
     clientId: 'techaxon-shop',
     clientName: 'TechAxon Shop',
+    defaultRedirectUri: 'https://shop.techaxon.de/auth/callback',
     allowedRedirectUris: [
       'https://shop.techaxon.de/auth/callback',
       'https://shop.techaxon.localhost/auth/callback',
@@ -42,6 +46,7 @@ export const DEFAULT_CLIENTS: Record<string, RegisteredClient> = {
   'test-client': {
     clientId: 'test-client',
     clientName: 'Test Client Application',
+    defaultRedirectUri: 'https://app.example.com/callback',
     allowedRedirectUris: [
       'https://app.example.com/callback',
       'http://localhost:3000/callback',
@@ -56,12 +61,12 @@ export const DEFAULT_CLIENTS: Record<string, RegisteredClient> = {
       'http://localhost:3000/api/auth/callback',
       'https://portal.techaxon.com/api/auth/callback',
       'http://localhost:3001/callback',
-      'https://humble-trout-5wwwww7995v2v9gj-3001.app.github.dev/callback',
     ],
   },
   'techaxon-app': {
     clientId: 'techaxon-app',
     clientName: 'TechAxon App',
+    defaultRedirectUri: 'http://localhost:3000/callback',
     allowedRedirectUris: [
       'http://localhost:3000/callback',
       'http://localhost:3001/callback',
@@ -71,11 +76,13 @@ export const DEFAULT_CLIENTS: Record<string, RegisteredClient> = {
   'client-app': {
     clientId: 'client-app',
     clientName: 'Client Application',
+    defaultRedirectUri: 'https://client.example.com/callback',
     allowedRedirectUris: ['https://client.example.com/callback', 'http://localhost:3000/callback'],
   },
   'my-client': {
     clientId: 'my-client',
     clientName: 'My Client Application',
+    defaultRedirectUri: 'https://my-client.example.com/callback',
     allowedRedirectUris: [
       'https://my-client.example.com/callback',
       'http://localhost:3000/callback',
@@ -90,6 +97,7 @@ function loadClientsFromEnv(): Record<string, RegisteredClient> {
     ...DEFAULT_CLIENTS,
     'techaxon-web': {
       ...DEFAULT_CLIENTS['techaxon-web'],
+      defaultRedirectUri: webRedirectUri,
       allowedRedirectUris: [
         ...DEFAULT_CLIENTS['techaxon-web'].allowedRedirectUris,
         webRedirectUri,
@@ -107,8 +115,8 @@ function loadClientsFromEnv(): Record<string, RegisteredClient> {
       ...defaultClients,
       ...parsed,
     };
-  } catch {
-    return DEFAULT_CLIENTS;
+  } catch (error: unknown) {
+    throw new Error('OIDC_CLIENTS_JSON must contain valid JSON', { cause: error });
   }
 }
 

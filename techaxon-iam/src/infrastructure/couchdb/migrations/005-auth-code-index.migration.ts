@@ -11,7 +11,7 @@ import type { CouchDbMigration } from './migration.interface';
  * Design doc : iam_auth_codes
  * Fields     : ['type', 'code', 'used']
  * Purpose    : Used by CouchDbAuthCodeRepository.findByCode() during
- *              OIDC authorization code exchange.
+ *              OAuth 2.0 authorization code exchange.
  *
  * Manual creation (curl):
  * curl -X POST <DB_URL>/_index \

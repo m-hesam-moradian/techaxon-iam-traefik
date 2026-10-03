@@ -9,7 +9,6 @@ export default function Home() {
   const {
     user,
     accessToken,
-    refreshToken,
     tokenExpiresAt,
     isLoading,
     error,
@@ -79,7 +78,6 @@ export default function Home() {
 
   const resetBrowserSession = async () => {
     await logout();
-    localStorage.clear();
     sessionStorage.clear();
     document.cookie.split(";").forEach((cookie) => {
       const name = cookie.split("=")[0].trim();
@@ -114,7 +112,7 @@ export default function Home() {
                   TechAxon
                 </span>
                 <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400">
-                  OIDC / SSO Client
+                  OAuth 2.0 / SSO Client
                 </span>
               </div>
               <p className="text-xs text-zinc-500 dark:text-zinc-400">
@@ -192,7 +190,7 @@ export default function Home() {
 
               <div className="relative z-10 max-w-3xl space-y-6">
                 <div className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50/80 px-3 py-1 text-xs font-medium text-indigo-700 dark:border-indigo-900/50 dark:bg-indigo-950/50 dark:text-indigo-300">
-                  <span>🚀</span> End-to-End OIDC Authorization Code Flow
+                  <span>🚀</span> OAuth 2.0 Authorization Code Flow
                 </div>
 
                 <h1 className="text-4xl font-extrabold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-5xl">
@@ -200,14 +198,14 @@ export default function Home() {
                 </h1>
 
                 <p className="text-lg leading-relaxed text-zinc-600 dark:text-zinc-300">
-                  This Next.js application acts as a registered client application in the TechAxon ecosystem. It tests the complete OIDC Authorization Code Grant flow, session detection, and token exchange.
+                  This Next.js application demonstrates the OAuth 2.0 Authorization Code flow, session detection, and token exchange. It does not implement OpenID Connect features such as ID tokens or discovery.
                 </p>
 
                 {/* Client Selector & Configuration */}
                 <div className="grid gap-4 sm:grid-cols-2 pt-2">
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                      OIDC Client Identifier
+                      OAuth Client Identifier
                     </label>
                     <div className="w-full rounded-xl border border-zinc-300 bg-zinc-50 px-3.5 py-2.5 text-sm font-medium text-zinc-500 shadow-sm dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400">
                       TechAxon Web Portal (techaxon-web)
@@ -248,10 +246,10 @@ export default function Home() {
               </div>
             </div>
 
-            {/* OIDC Flow Architecture Steps */}
+            {/* OAuth 2.0 Flow Architecture Steps */}
             <div className="space-y-4">
               <h2 className="text-xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
-                OIDC Authorization Code Flow Pipeline
+                OAuth 2.0 Authorization Code Flow Pipeline
               </h2>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="rounded-2xl border border-zinc-200/80 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
@@ -262,7 +260,7 @@ export default function Home() {
                     GET /auth/authorize
                   </h3>
                   <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
-                    Client initiates flow with <code className="font-mono text-[11px]">client_id</code>, <code className="font-mono text-[11px]">redirect_uri</code>, and <code className="font-mono text-[11px]">state</code>.
+                    Client starts with <code className="font-mono text-[11px]">client_id</code> and <code className="font-mono text-[11px]">state</code>; IAM supplies the registered callback URI.
                   </p>
                 </div>
 
@@ -298,7 +296,7 @@ export default function Home() {
                     POST /auth/token
                   </h3>
                   <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
-                    Client exchanges code for real <code className="font-mono text-[11px]">accessToken</code> + <code className="font-mono text-[11px]">refreshToken</code>.
+                    Client receives an <code className="font-mono text-[11px]">accessToken</code>; IAM stores the refresh token in an HttpOnly cookie.
                   </p>
                 </div>
               </div>
@@ -352,7 +350,7 @@ export default function Home() {
             </div>
 
             {/* Token Inspector & Session Cards */}
-            <div className="grid gap-6 md:grid-cols-3">
+            <div className="grid gap-6 md:grid-cols-2">
               {/* Access Token Card */}
               <div className="rounded-2xl border border-zinc-200/80 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900 shadow-sm flex flex-col justify-between">
                 <div>
@@ -379,29 +377,6 @@ export default function Home() {
                   className="mt-3 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition text-center"
                 >
                   {copiedKey === "access" ? "✓ Copied" : "Copy Access Token"}
-                </button>
-              </div>
-
-              {/* Refresh Token Card */}
-              <div className="rounded-2xl border border-zinc-200/80 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900 shadow-sm flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                      Refresh Token
-                    </span>
-                    <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                      ● Active (30d TTL)
-                    </span>
-                  </div>
-                  <div className="rounded-xl bg-zinc-50 dark:bg-zinc-950 p-3 font-mono text-[11px] text-zinc-600 dark:text-zinc-400 break-all max-h-24 overflow-y-auto border border-zinc-200/50 dark:border-zinc-800">
-                    {refreshToken || "None"}
-                  </div>
-                </div>
-                <button
-                  onClick={() => refreshToken && copyToClipboard(refreshToken, "refresh")}
-                  className="mt-3 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition text-center"
-                >
-                  {copiedKey === "refresh" ? "✓ Copied" : "Copy Refresh Token"}
                 </button>
               </div>
 

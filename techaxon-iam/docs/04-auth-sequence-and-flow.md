@@ -1,6 +1,6 @@
 # TechAxon Authentication: Detailed Textual Execution Pipeline
 
-This document provides a highly detailed, step-by-step textual trace of every backend authentication pipeline. It defines how data, parameters, databases, and cryptographic functions interact across our NestJS, CouchDB, and Redis layers.
+This document provides a highly detailed, step-by-step textual trace of every backend authentication pipeline. It defines how data, parameters, databases, and cryptographic functions interact across our NestJS, CouchDB, and Redis layers. The authorization-code endpoints implement OAuth 2.0; OpenID Connect features such as ID tokens, UserInfo, and discovery are not implemented.
 
 ---
 
@@ -192,13 +192,13 @@ This document provides a highly detailed, step-by-step textual trace of every ba
 
 ---
 
-## 5. Pipeline: OIDC Authorization Endpoint (`GET /auth/authorize`)
+## 5. Pipeline: OAuth 2.0 Authorization Endpoint (`GET /auth/authorize`)
 
 ### 5.1 Request Entry & Parameter Validation
 
 - **Trigger:** The client redirects the user browser to `/auth/authorize`.
 - **Query Parameters:**
-  - `client_id` (string): The registered OIDC client identifier.
+  - `client_id` (string): The registered OAuth 2.0 client identifier.
   - `redirect_uri` (string): Pre-registered callback URL for the client.
   - `state` (string): Opaque CSRF protection string.
   - `response_type` (`"code"`): Must be `code` for Authorization Code flow.
@@ -234,9 +234,9 @@ This document provides a highly detailed, step-by-step textual trace of every ba
 
 ---
 
-## 6. Pipeline: OIDC Token Exchange (`POST /auth/token`)
+## 6. Pipeline: OAuth 2.0 Token Exchange (`POST /auth/token`)
 
-This is **Step 8** of the OIDC Authorization Code Grant flow (RFC 6749 §4.1.3).
+This is **Step 8** of the OAuth 2.0 Authorization Code Grant flow (RFC 6749 §4.1.3).
 After the browser receives the `?code=` redirect from `/authorize`, the client
 application (not the browser) sends that code to this endpoint to obtain real
 access and refresh tokens.

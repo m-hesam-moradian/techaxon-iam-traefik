@@ -397,6 +397,17 @@ export class AuthService {
     return Promise.resolve(client.allowedRedirectUris.includes(redirectUri));
   }
 
+  getClientRedirectUri(clientId: string): string {
+    const client = this.clientsConfiguration?.clients[clientId];
+    const redirectUri = client?.defaultRedirectUri;
+
+    if (!client || !redirectUri || !client.allowedRedirectUris.includes(redirectUri)) {
+      throw new BadRequestException('No registered default redirect URI for client');
+    }
+
+    return redirectUri;
+  }
+
   /**
    * Returns the refresh token TTL in milliseconds (defaults to 30 days if unset).
    */
