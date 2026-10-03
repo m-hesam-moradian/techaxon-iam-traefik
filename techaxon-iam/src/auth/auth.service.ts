@@ -45,6 +45,20 @@ export class AuthService {
     private readonly clientsConfiguration?: ConfigType<typeof clientsConfig>,
   ) {}
 
+  async getProfile(userId: string) {
+    const user = await this.userRepo.findById(userId);
+    if (!user || user.status !== 'active') {
+      throw new UnauthorizedException('User not found or account is not active');
+    }
+
+    return {
+      id: user._id,
+      username: user.username ?? 'User',
+      email: user.email,
+      mfaEnabled: Boolean(user.mfa?.enabled),
+    };
+  }
+
   async register(dto: RegisterDto) {
     const email = dto.email.trim().toLowerCase();
 
@@ -146,7 +160,15 @@ export class AuthService {
 
     // 4. Check if Multi-Factor Authentication (MFA) is enabled for this account
     if (user.mfa?.enabled) {
-      const mfaToken = this.tokenService.generateMfaChallengeToken(userId);
+      const authorization =
+        dto.clientId && dto.redirectUri
+          ? {
+              clientId: dto.clientId,
+              redirectUri: dto.redirectUri,
+              state: dto.state,
+            }
+          : undefined;
+      const mfaToken = this.tokenService.generateMfaChallengeToken(userId, authorization);
       return {
         mfaRequired: true,
         mfaToken,
@@ -722,6 +744,14 @@ export class AuthService {
   ) {
     // 1. Verify the short-lived challenge token
     const payload = await this.tokenService.verifyMfaChallengeToken(dto.mfa_token);
+    if (
+      payload.clientId !== dto.clientId ||
+      payload.redirectUri !== dto.redirectUri ||
+      payload.state !== dto.state
+    ) {
+      throw new UnauthorizedException('MFA challenge authorization context does not match');
+    }
+
     const userId = payload.sub;
 
     const user = await this.userRepo.findById(userId);

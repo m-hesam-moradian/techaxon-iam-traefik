@@ -57,7 +57,7 @@ From the project root:
 pnpm dev
 ```
 
-This starts the local infrastructure and generates the required development certificates if they do not already exist.
+This starts CouchDB, Redis, and Traefik in Docker, waits for CouchDB to become healthy, then runs the IAM API and Next.js frontend directly on the host. Their logs appear together in the terminal.
 
 ## Development
 
@@ -206,7 +206,7 @@ techaxon-iam-traefik/
 
 ## Useful Commands
 
-Start the infrastructure:
+Start the development stack:
 
 ```bash
 pnpm dev

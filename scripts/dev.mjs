@@ -19,6 +19,7 @@ const environment = {
   HOSTNAME: "0.0.0.0",
   NEXT_PUBLIC_IAM_BASE_URL: "/iam",
   IAM_INTERNAL_URL: "http://127.0.0.1:3000",
+  IAM_PUBLIC_URL: iamUrl,
   OIDC_WEB_REDIRECT_URI: `${frontendUrl}/callback`,
   CORS_ALLOWED_ORIGINS: frontendUrl,
   COOKIE_DOMAIN: cookieDomain,
@@ -29,7 +30,7 @@ console.log(`Frontend: ${frontendUrl}`);
 console.log(`IAM API:  ${iamUrl}`);
 console.log("Starting Docker infrastructure, IAM, and frontend...\n");
 
-const dockerResult = spawnSync("docker", ["compose", "up", "-d"], {
+const dockerResult = spawnSync("docker", ["compose", "up", "-d", "--wait", "--wait-timeout", "120"], {
   env: environment,
   stdio: "inherit",
 });

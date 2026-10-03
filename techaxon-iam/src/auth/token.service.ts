@@ -58,11 +58,15 @@ export class TokenService {
   /**
    * Generates a short-lived (5m) MFA login challenge token.
    */
-  generateMfaChallengeToken(userId: string): string {
+  generateMfaChallengeToken(
+    userId: string,
+    authorization?: Pick<JwtPayload, 'clientId' | 'redirectUri' | 'state'>,
+  ): string {
     const payload: JwtPayload = {
       sub: userId,
       sid: '',
       type: 'mfa_challenge',
+      ...authorization,
     };
 
     return this.jwtService.sign(payload, {

@@ -27,4 +27,16 @@ export class MfaAuthenticateDto {
   @IsOptional()
   @IsString()
   backup_code?: string;
+
+  @IsOptional()
+  @IsString()
+  clientId?: string;
+
+  @IsOptional()
+  @IsString()
+  redirectUri?: string;
+
+  @IsOptional()
+  @IsString()
+  state?: string;
 }

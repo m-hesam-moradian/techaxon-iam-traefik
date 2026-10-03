@@ -14,6 +14,7 @@ import {
   Inject,
   Optional,
   BadRequestException,
+  HttpException,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import type { ConfigType } from '@nestjs/config';
@@ -79,34 +80,42 @@ export class AuthController {
   async login(
     @Body() dto: LoginDto,
     @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
+    @Res() res: Response,
   ) {
     const userAgent = req.headers['user-agent'];
     const ipAddress = req.ip ?? req.socket.remoteAddress;
 
     const result = await this.authService.login(dto, { userAgent, ipAddress });
 
-    // If MFA is required, return challenge token without setting session cookie
-    if (result.mfaRequired || !result.refreshToken) {
-      return result;
+    if (result.mfaRequired) {
+      if (dto.clientId && dto.redirectUri) {
+        res.render('mfa-challenge', {
+          mfaToken: result.mfaToken,
+          clientId: dto.clientId,
+          redirectUri: dto.redirectUri,
+          state: dto.state,
+        });
+        return;
+      }
+
+      return res.json(result);
+    }
+
+    if (!result.refreshToken) {
+      return res.json(result);
     }
 
     this.setRefreshTokenCookie(res, result.refreshToken);
 
     if (dto.clientId && dto.redirectUri) {
-      const forwardedProtocol = req.get('x-forwarded-proto')?.split(',')[0].trim();
-      const forwardedHost = req.get('x-forwarded-host')?.split(',')[0].trim();
-      const protocol = forwardedProtocol || req.protocol;
-      const host = forwardedHost || req.get('host');
-      const authorizeUrl = new URL(`${protocol}://${host}/auth/authorize`);
-      authorizeUrl.searchParams.set('client_id', dto.clientId);
-      authorizeUrl.searchParams.set('redirect_uri', dto.redirectUri);
-      if (dto.state) authorizeUrl.searchParams.set('state', dto.state);
-      authorizeUrl.searchParams.set('response_type', 'code');
-      return res.redirect(302, authorizeUrl.toString());
+      res.redirect(
+        302,
+        this.buildAuthorizeUrl(req, dto.clientId, dto.redirectUri, dto.state),
+      );
+      return;
     }
 
-    return result;
+    return res.json(result);
   }
 
   /**
@@ -129,6 +138,25 @@ export class AuthController {
       path,
       maxAge: refreshExpiresInMs,
     });
+  }
+
+  private buildAuthorizeUrl(
+    req: Request,
+    clientId: string,
+    redirectUri: string,
+    state?: string,
+  ): string {
+    const forwardedProtocol = req.get('x-forwarded-proto')?.split(',')[0].trim();
+    const forwardedHost = req.get('x-forwarded-host')?.split(',')[0].trim();
+    const protocol = forwardedProtocol || req.protocol;
+    const host = forwardedHost || req.get('host');
+    const publicIamUrl = process.env.IAM_PUBLIC_URL || `${protocol}://${host}`;
+    const authorizeUrl = new URL('/auth/authorize', publicIamUrl);
+    authorizeUrl.searchParams.set('client_id', clientId);
+    authorizeUrl.searchParams.set('redirect_uri', redirectUri);
+    if (state) authorizeUrl.searchParams.set('state', state);
+    authorizeUrl.searchParams.set('response_type', 'code');
+    return authorizeUrl.toString();
   }
 
   /**
@@ -196,8 +224,8 @@ export class AuthController {
   @Get('me')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
-  getProfile(@Req() req: Request & { user: AuthenticatedUser }) {
-    return req.user;
+  async getProfile(@Req() req: Request & { user: AuthenticatedUser }) {
+    return this.authService.getProfile(req.user.userId);
   }
 
   /**
@@ -314,14 +342,54 @@ export class AuthController {
   async mfaAuthenticate(
     @Body() dto: MfaAuthenticateDto,
     @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
+    @Res() res: Response,
   ) {
     const userAgent = req.headers['user-agent'];
     const ipAddress = req.ip ?? req.socket.remoteAddress;
+    let result: Awaited<ReturnType<AuthService['mfaAuthenticate']>>;
 
-    const result = await this.authService.mfaAuthenticate(dto, { userAgent, ipAddress });
+    try {
+      if (dto.clientId && dto.redirectUri) {
+        const isClientValid = await this.authService.validateClientRedirectUri(
+          dto.clientId,
+          dto.redirectUri,
+        );
+
+        if (!isClientValid) {
+          throw new BadRequestException('Invalid client_id or unauthorized redirect_uri');
+        }
+      }
+
+      result = await this.authService.mfaAuthenticate(dto, { userAgent, ipAddress });
+    } catch (error: unknown) {
+      if (
+        dto.clientId &&
+        dto.redirectUri &&
+        error instanceof HttpException
+      ) {
+        res.status(error.getStatus()).render('mfa-challenge', {
+          mfaToken: dto.mfa_token,
+          clientId: dto.clientId,
+          redirectUri: dto.redirectUri,
+          state: dto.state,
+          error: error.message,
+        });
+        return;
+      }
+
+      throw error;
+    }
+
     this.setRefreshTokenCookie(res, result.refreshToken);
 
-    return result;
+    if (dto.clientId && dto.redirectUri) {
+      res.redirect(
+        302,
+        this.buildAuthorizeUrl(req, dto.clientId, dto.redirectUri, dto.state),
+      );
+      return;
+    }
+
+    return res.json(result);
   }
 }

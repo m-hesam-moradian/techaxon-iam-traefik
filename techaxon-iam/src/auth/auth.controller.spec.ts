@@ -5,7 +5,7 @@ jest.mock('uuid', () => ({
 }));
 
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import type { Request, Response } from 'express';
 
 import { AuthController } from './auth.controller';
@@ -23,9 +23,11 @@ describe('AuthController', () => {
   const mockAuthService = {
     register: jest.fn(),
     login: jest.fn(),
+    getProfile: jest.fn(),
     verifyEmail: jest.fn(),
     refreshToken: jest.fn(),
     logout: jest.fn(),
+    mfaAuthenticate: jest.fn(),
     validateClientRedirectUri: jest.fn().mockResolvedValue(true),
     validateRefreshTokenCookie: jest.fn(),
     generateAuthorizationCode: jest.fn(),
@@ -49,6 +51,24 @@ describe('AuthController', () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+  });
+
+  describe('GET /auth/me', () => {
+    it('should return the authenticated user profile including MFA status', async () => {
+      const profile = {
+        id: 'user:123',
+        username: 'tester',
+        email: 'test@example.com',
+        mfaEnabled: true,
+      };
+      const req = {
+        user: { userId: 'user:123', sessionId: 'session:123' },
+      } as unknown as Request & { user: { userId: string; sessionId: string } };
+      mockAuthService.getProfile.mockResolvedValue(profile);
+
+      await expect(controller.getProfile(req)).resolves.toEqual(profile);
+      expect(mockAuthService.getProfile).toHaveBeenCalledWith('user:123');
+    });
   });
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -250,6 +270,7 @@ describe('AuthController', () => {
       const cookieMock = jest.fn();
       const mockRes = {
         cookie: cookieMock,
+        json: jest.fn(),
       } as unknown as Response;
 
       mockAuthService.login.mockResolvedValue({
@@ -314,6 +335,180 @@ describe('AuthController', () => {
         302,
         `${process.env.TEST_PUBLIC_IAM_URL ?? `https://${publicIamHost}`}/auth/authorize?client_id=techaxon-web&redirect_uri=${encodeURIComponent(publicRedirectUri)}&state=forwarded-state&response_type=code`,
       );
+    });
+  });
+
+  describe('MFA login challenge', () => {
+    it('should render the MFA challenge for an OIDC login', async () => {
+      const mockReq = {
+        headers: { 'user-agent': 'jest-test-agent' },
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' },
+      } as unknown as Request;
+      const mockRes = {
+        cookie: jest.fn(),
+        render: jest.fn(),
+      } as unknown as Response;
+
+      mockAuthService.login.mockResolvedValue({
+        mfaRequired: true,
+        mfaToken: 'mfa-challenge-token',
+      });
+
+      await controller.login(
+        {
+          email: 'test@example.com',
+          password: 'pass123',
+          clientId: 'techaxon-web',
+          redirectUri: publicRedirectUri,
+          state: 'mfa-state',
+        },
+        mockReq,
+        mockRes,
+      );
+
+      expect(mockRes.render).toHaveBeenCalledWith('mfa-challenge', {
+        mfaToken: 'mfa-challenge-token',
+        clientId: 'techaxon-web',
+        redirectUri: publicRedirectUri,
+        state: 'mfa-state',
+      });
+      expect(mockRes.cookie).not.toHaveBeenCalled();
+    });
+
+    it('should redirect to authorize after valid MFA for an OIDC login', async () => {
+      const mockReq = {
+        headers: { 'user-agent': 'jest-test-agent' },
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' },
+        protocol: 'http',
+        get: jest.fn((header: string) => {
+          if (header === 'x-forwarded-proto') return 'https';
+          if (header === 'x-forwarded-host') return publicIamHost;
+          return 'localhost:3000';
+        }),
+      } as unknown as Request;
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn(),
+      } as unknown as Response;
+      const dto = {
+        mfa_token: 'mfa-challenge-token',
+        code: '123456',
+        clientId: 'techaxon-web',
+        redirectUri: publicRedirectUri,
+        state: 'mfa-state',
+      };
+
+      mockAuthService.mfaAuthenticate.mockResolvedValue({
+        accessToken: 'access-jwt',
+        refreshToken: 'raw-refresh-token',
+      });
+
+      const originalIamPublicUrl = process.env.IAM_PUBLIC_URL;
+      process.env.IAM_PUBLIC_URL = 'https://public-iam.app.github.dev';
+      try {
+        await controller.mfaAuthenticate(dto, mockReq, mockRes);
+      } finally {
+        if (originalIamPublicUrl === undefined) {
+          delete process.env.IAM_PUBLIC_URL;
+        } else {
+          process.env.IAM_PUBLIC_URL = originalIamPublicUrl;
+        }
+      }
+
+      expect(mockAuthService.validateClientRedirectUri).toHaveBeenCalledWith(
+        dto.clientId,
+        dto.redirectUri,
+      );
+      expect(mockAuthService.mfaAuthenticate).toHaveBeenCalledWith(
+        dto,
+        expect.objectContaining({ userAgent: 'jest-test-agent' }),
+      );
+      expect(mockRes.cookie).toHaveBeenCalledWith(
+        'techaxon_refresh_token',
+        'raw-refresh-token',
+        expect.any(Object),
+      );
+      expect(mockRes.redirect).toHaveBeenCalledWith(
+        302,
+        `https://public-iam.app.github.dev/auth/authorize?client_id=techaxon-web&redirect_uri=${encodeURIComponent(publicRedirectUri)}&state=mfa-state&response_type=code`,
+      );
+    });
+
+    it('should re-render the MFA challenge with an invalid-code error for browser login', async () => {
+      const mockReq = {
+        headers: { 'user-agent': 'jest-test-agent' },
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' },
+      } as unknown as Request;
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn(),
+        render: jest.fn(),
+        status: jest.fn().mockReturnThis(),
+      } as unknown as Response;
+      const dto = {
+        mfa_token: 'mfa-challenge-token',
+        code: '000000',
+        clientId: 'techaxon-web',
+        redirectUri: publicRedirectUri,
+        state: 'mfa-state',
+      };
+
+      mockAuthService.mfaAuthenticate.mockRejectedValue(
+        new UnauthorizedException('Invalid MFA verification code'),
+      );
+
+      await controller.mfaAuthenticate(dto, mockReq, mockRes);
+
+      expect(mockRes.status).toHaveBeenCalledWith(401);
+      expect(mockRes.render).toHaveBeenCalledWith('mfa-challenge', {
+        mfaToken: dto.mfa_token,
+        clientId: dto.clientId,
+        redirectUri: dto.redirectUri,
+        state: dto.state,
+        error: 'Invalid MFA verification code',
+      });
+      expect(mockRes.cookie).not.toHaveBeenCalled();
+      expect(mockRes.redirect).not.toHaveBeenCalled();
+    });
+
+    it('should show an error for an unregistered redirect before completing MFA', async () => {
+      mockAuthService.validateClientRedirectUri.mockResolvedValue(false);
+      const mockReq = {
+        headers: {},
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' },
+      } as unknown as Request;
+      const mockRes = {
+        cookie: jest.fn(),
+        redirect: jest.fn(),
+        render: jest.fn(),
+        status: jest.fn().mockReturnThis(),
+      } as unknown as Response;
+
+      await controller.mfaAuthenticate(
+        {
+          mfa_token: 'mfa-challenge-token',
+          code: '123456',
+          clientId: 'techaxon-web',
+          redirectUri: 'https://attacker.example/callback',
+        },
+        mockReq,
+        mockRes,
+      );
+
+      expect(mockRes.status).toHaveBeenCalledWith(400);
+      expect(mockRes.render).toHaveBeenCalledWith(
+        'mfa-challenge',
+        expect.objectContaining({
+          error: 'Invalid client_id or unauthorized redirect_uri',
+        }),
+      );
+      expect(mockAuthService.mfaAuthenticate).not.toHaveBeenCalled();
+      expect(mockRes.cookie).not.toHaveBeenCalled();
+      expect(mockRes.redirect).not.toHaveBeenCalled();
     });
   });
 });

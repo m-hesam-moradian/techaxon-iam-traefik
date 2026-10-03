@@ -134,6 +134,54 @@ describe('AuthService', () => {
     jest.clearAllMocks();
   });
 
+  describe('getProfile', () => {
+    it('should return the active user profile with MFA status and no MFA secrets', async () => {
+      mockUserRepository.findById.mockResolvedValue({
+        _id: 'user:123',
+        type: 'user',
+        username: 'tester',
+        email: 'test@example.com',
+        passwordHash: 'password-hash',
+        status: 'active',
+        tenantId: null,
+        emailVerified: true,
+        updatedAt: new Date().toISOString(),
+        mfa: {
+          enabled: true,
+          secret: 'encrypted-secret',
+          backupCodes: ['hashed-backup-code'],
+          enrolledAt: new Date().toISOString(),
+        },
+      });
+
+      await expect(authService.getProfile('user:123')).resolves.toEqual({
+        id: 'user:123',
+        username: 'tester',
+        email: 'test@example.com',
+        mfaEnabled: true,
+      });
+    });
+
+    it('should reject a missing or inactive user', async () => {
+      mockUserRepository.findById.mockResolvedValue(null);
+
+      await expect(authService.getProfile('user:missing')).rejects.toThrow(
+        UnauthorizedException,
+      );
+    });
+
+    it('should reject an inactive user', async () => {
+      mockUserRepository.findById.mockResolvedValue({
+        _id: 'user:123',
+        status: 'disabled',
+      });
+
+      await expect(authService.getProfile('user:123')).rejects.toThrow(
+        UnauthorizedException,
+      );
+    });
+  });
+
   // ─────────────────────────────────────────────────────────────────────────
   // register()
   // ─────────────────────────────────────────────────────────────────────────
@@ -684,6 +732,9 @@ describe('AuthService', () => {
       const result = await authService.login({
         email: 'mfa-user@example.com',
         password: 'password123',
+        clientId: 'techaxon-web',
+        redirectUri: 'https://app.example.com/callback',
+        state: 'mfa-state',
       });
 
       expect(result).toEqual({
@@ -695,6 +746,14 @@ describe('AuthService', () => {
           username: 'mfauser',
         },
       });
+      expect(tokenService.generateMfaChallengeToken).toHaveBeenCalledWith(
+        'user:mfa-123',
+        {
+          clientId: 'techaxon-web',
+          redirectUri: 'https://app.example.com/callback',
+          state: 'mfa-state',
+        },
+      );
       expect(sessionService.createSession).not.toHaveBeenCalled();
     });
   });
@@ -816,6 +875,29 @@ describe('AuthService', () => {
   });
 
   describe('mfaAuthenticate', () => {
+    it('should reject an authorization context changed after the MFA challenge was issued', async () => {
+      (tokenService.verifyMfaChallengeToken as jest.Mock).mockResolvedValue({
+        sub: 'user:mfa-123',
+        type: 'mfa_challenge',
+        clientId: 'techaxon-web',
+        redirectUri: 'https://app.example.com/callback',
+        state: 'mfa-state',
+      });
+
+      await expect(
+        authService.mfaAuthenticate({
+          mfa_token: 'valid-challenge-token',
+          code: '123456',
+          clientId: 'techaxon-web',
+          redirectUri: 'https://attacker.example/callback',
+          state: 'mfa-state',
+        }),
+      ).rejects.toThrow(UnauthorizedException);
+
+      expect(userRepo.findById).not.toHaveBeenCalled();
+      expect(sessionService.createSession).not.toHaveBeenCalled();
+    });
+
     it('should authenticate user with valid challenge token and TOTP code', async () => {
       (tokenService.verifyMfaChallengeToken as jest.Mock).mockResolvedValue({
         sub: 'user:mfa-123',
