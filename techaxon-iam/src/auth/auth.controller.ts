@@ -14,6 +14,9 @@ import {
   Inject,
   Optional,
   BadRequestException,
+  HttpException,
+  UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import type { ConfigType } from '@nestjs/config';
@@ -23,7 +26,6 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
-import { LogoutDto } from './dto/logout.dto';
 import { AuthorizeQueryDto } from './dto/authorize-query.dto';
 import { TokenExchangeDto } from './dto/token-exchange.dto';
 import { MfaEnableDto } from './dto/mfa-enable.dto';
@@ -79,34 +81,44 @@ export class AuthController {
   async login(
     @Body() dto: LoginDto,
     @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
+    @Res() res: Response,
   ) {
+    this.assertTrustedLoginOrigin(req);
+
     const userAgent = req.headers['user-agent'];
     const ipAddress = req.ip ?? req.socket.remoteAddress;
 
     const result = await this.authService.login(dto, { userAgent, ipAddress });
 
-    // If MFA is required, return challenge token without setting session cookie
-    if (result.mfaRequired || !result.refreshToken) {
-      return result;
+    if (result.mfaRequired) {
+      if (dto.clientId && dto.redirectUri) {
+        res.render('mfa-challenge', {
+          mfaToken: result.mfaToken,
+          clientId: dto.clientId,
+          redirectUri: dto.redirectUri,
+          state: dto.state,
+        });
+        return;
+      }
+
+      return res.json(result);
+    }
+
+    if (!result.refreshToken) {
+      return res.json(result);
     }
 
     this.setRefreshTokenCookie(res, result.refreshToken);
 
     if (dto.clientId && dto.redirectUri) {
-      const forwardedProtocol = req.get('x-forwarded-proto')?.split(',')[0].trim();
-      const forwardedHost = req.get('x-forwarded-host')?.split(',')[0].trim();
-      const protocol = forwardedProtocol || req.protocol;
-      const host = forwardedHost || req.get('host');
-      const authorizeUrl = new URL(`${protocol}://${host}/auth/authorize`);
-      authorizeUrl.searchParams.set('client_id', dto.clientId);
-      authorizeUrl.searchParams.set('redirect_uri', dto.redirectUri);
-      if (dto.state) authorizeUrl.searchParams.set('state', dto.state);
-      authorizeUrl.searchParams.set('response_type', 'code');
-      return res.redirect(302, authorizeUrl.toString());
+      res.redirect(
+        302,
+        this.buildAuthorizeUrl(req, dto.clientId, dto.redirectUri, dto.state),
+      );
+      return;
     }
 
-    return result;
+    return res.json(result);
   }
 
   /**
@@ -114,8 +126,7 @@ export class AuthController {
    */
   private setRefreshTokenCookie(res: Response, refreshToken: string): void {
     const refreshExpiresInMs = this.authService.getRefreshTokenExpiresInMs();
-    const domain =
-      this.cookieConfiguration?.domain ?? process.env.COOKIE_DOMAIN ?? '.techaxon.localhost';
+    const domain = this.cookieConfiguration?.domain ?? process.env.COOKIE_DOMAIN;
     const secure = this.cookieConfiguration?.secure ?? process.env.NODE_ENV === 'production';
     const sameSite = this.cookieConfiguration?.sameSite ?? 'lax';
     const httpOnly = this.cookieConfiguration?.httpOnly ?? true;
@@ -125,10 +136,73 @@ export class AuthController {
       httpOnly,
       secure,
       sameSite,
-      domain,
+      ...(domain ? { domain } : {}),
       path,
       maxAge: refreshExpiresInMs,
     });
+  }
+
+  private clearRefreshTokenCookie(res: Response): void {
+    const domain = this.cookieConfiguration?.domain ?? process.env.COOKIE_DOMAIN;
+    const secure = this.cookieConfiguration?.secure ?? process.env.NODE_ENV === 'production';
+    const sameSite = this.cookieConfiguration?.sameSite ?? 'lax';
+    const httpOnly = this.cookieConfiguration?.httpOnly ?? true;
+    const path = this.cookieConfiguration?.path ?? '/';
+
+    res.clearCookie('techaxon_refresh_token', {
+      httpOnly,
+      secure,
+      sameSite,
+      ...(domain ? { domain } : {}),
+      path,
+    });
+  }
+
+  private assertTrustedLoginOrigin(req: Request): void {
+    const origin = req.headers.origin;
+    if (!origin) return;
+
+    const allowedOrigins = new Set(
+      (process.env.CORS_ALLOWED_ORIGINS ?? '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean),
+    );
+    const publicIamUrl = process.env.IAM_PUBLIC_URL;
+    if (publicIamUrl) {
+      allowedOrigins.add(new URL(publicIamUrl).origin);
+    }
+
+    if (!allowedOrigins.has(origin)) {
+      throw new ForbiddenException('Login request origin is not allowed');
+    }
+  }
+
+  private buildAuthorizeUrl(
+    req: Request,
+    clientId: string,
+    redirectUri: string,
+    state?: string,
+  ): string {
+    const forwardedProtocol = req.get('x-forwarded-proto')?.split(',')[0].trim();
+    const forwardedHost = req.get('x-forwarded-host')?.split(',')[0].trim();
+    const protocol = forwardedProtocol || req.protocol;
+    const host = forwardedHost || req.get('host');
+    const publicIamUrl = process.env.IAM_PUBLIC_URL || `${protocol}://${host}`;
+    const authorizeUrl = new URL('/auth/authorize', publicIamUrl);
+    authorizeUrl.searchParams.set('client_id', clientId);
+    authorizeUrl.searchParams.set('redirect_uri', redirectUri);
+    if (state) authorizeUrl.searchParams.set('state', state);
+    authorizeUrl.searchParams.set('response_type', 'code');
+    return authorizeUrl.toString();
+  }
+
+  @Get('client-config')
+  getClientConfig(@Query('client_id') clientId: string) {
+    return {
+      clientId,
+      redirectUri: this.authService.getClientRedirectUri(clientId),
+    };
   }
 
   /**
@@ -196,8 +270,8 @@ export class AuthController {
   @Get('me')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
-  getProfile(@Req() req: Request & { user: AuthenticatedUser }) {
-    return req.user;
+  async getProfile(@Req() req: Request & { user: AuthenticatedUser }) {
+    return this.authService.getProfile(req.user.userId);
   }
 
   /**
@@ -208,8 +282,28 @@ export class AuthController {
    */
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  async refresh(@Body() dto: RefreshTokenDto) {
-    return await this.authService.refreshToken(dto.refreshToken);
+  async refresh(@Body() dto: RefreshTokenDto, @Req() req: Request, @Res() res: Response) {
+    const cookieToken = req.cookies?.techaxon_refresh_token as string | undefined;
+    const refreshToken = cookieToken ?? dto.refreshToken;
+
+    if (!refreshToken) {
+      throw new UnauthorizedException('Refresh token is required');
+    }
+
+    try {
+      const result = await this.authService.refreshToken(refreshToken);
+      if (cookieToken) {
+        this.setRefreshTokenCookie(res, result.refreshToken);
+        return res.json({ accessToken: result.accessToken });
+      }
+
+      return res.json(result);
+    } catch (error: unknown) {
+      if (cookieToken) {
+        this.clearRefreshTokenCookie(res);
+      }
+      throw error;
+    }
   }
 
   /**
@@ -221,8 +315,10 @@ export class AuthController {
   @Post('logout')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
-  async logout(@Body() dto: LogoutDto) {
-    return await this.authService.logout(dto.sessionId);
+  async logout(@Req() req: Request & { user: AuthenticatedUser }, @Res() res: Response) {
+    const result = await this.authService.logout(req.user.sessionId);
+    this.clearRefreshTokenCookie(res);
+    return res.json(result);
   }
 
   /**
@@ -239,8 +335,17 @@ export class AuthController {
    */
   @Post('token')
   @HttpCode(HttpStatus.OK)
-  async token(@Body() dto: TokenExchangeDto) {
-    return await this.authService.exchangeAuthCode(dto);
+  async token(@Body() dto: TokenExchangeDto, @Res() res: Response) {
+    const result = await this.authService.exchangeAuthCode(dto);
+    if (dto.client_id === 'techaxon-web') {
+      this.setRefreshTokenCookie(res, result.refresh_token);
+      return res.json({
+        access_token: result.access_token,
+        token_type: result.token_type,
+        expires_in: result.expires_in,
+      });
+    }
+    return res.json(result);
   }
 
   // =========================================================================
@@ -314,14 +419,60 @@ export class AuthController {
   async mfaAuthenticate(
     @Body() dto: MfaAuthenticateDto,
     @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
+    @Res() res: Response,
   ) {
     const userAgent = req.headers['user-agent'];
     const ipAddress = req.ip ?? req.socket.remoteAddress;
+    let result: Awaited<ReturnType<AuthService['mfaAuthenticate']>>;
 
-    const result = await this.authService.mfaAuthenticate(dto, { userAgent, ipAddress });
+    try {
+      if (dto.clientId && dto.redirectUri) {
+        const isClientValid = await this.authService.validateClientRedirectUri(
+          dto.clientId,
+          dto.redirectUri,
+        );
+
+        if (!isClientValid) {
+          throw new BadRequestException('Invalid client_id or unauthorized redirect_uri');
+        }
+      }
+
+      result = await this.authService.mfaAuthenticate(dto, { userAgent, ipAddress });
+    } catch (error: unknown) {
+      if (
+        dto.clientId &&
+        dto.redirectUri &&
+        error instanceof HttpException
+      ) {
+        res.status(error.getStatus()).render('mfa-challenge', {
+          mfaToken: dto.mfa_token,
+          clientId: dto.clientId,
+          redirectUri: dto.redirectUri,
+          state: dto.state,
+          error: error.message,
+        });
+        return;
+      }
+
+      throw error;
+    }
+
     this.setRefreshTokenCookie(res, result.refreshToken);
+    if (req.headers['x-auth-client'] === 'techaxon-web') {
+      return res.json({
+        accessToken: result.accessToken,
+        user: result.user,
+      });
+    }
 
-    return result;
+    if (dto.clientId && dto.redirectUri) {
+      res.redirect(
+        302,
+        this.buildAuthorizeUrl(req, dto.clientId, dto.redirectUri, dto.state),
+      );
+      return;
+    }
+
+    return res.json(result);
   }
 }

@@ -69,7 +69,7 @@ function CallbackHandler() {
                 Verifying Credentials
               </h2>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                Exchanging OIDC authorization code with TechAxon IAM (<code className="font-mono text-xs bg-zinc-100 dark:bg-zinc-800 px-1 py-0.5 rounded">POST /auth/token</code>)...
+                Exchanging OAuth 2.0 authorization code with TechAxon IAM (<code className="font-mono text-xs bg-zinc-100 dark:bg-zinc-800 px-1 py-0.5 rounded">POST /auth/token</code>)...
               </p>
             </div>
           </div>

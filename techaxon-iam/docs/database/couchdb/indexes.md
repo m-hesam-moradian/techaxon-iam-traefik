@@ -24,7 +24,7 @@ The application automatically checks and creates these 6 essential indexes using
    - Purpose: Used for email verification link handling.
 
 6. **`idx_auth_code_lookup`**: Index on fields `["type", "code", "used"]` (ddoc: `iam_auth_codes`)
-   - Purpose: Used by `CouchDbAuthCodeRepository.findByCode()` during OIDC Authorization Code exchange. Ensures fast lookup of short-lived, single-use auth codes.
+   - Purpose: Used by `CouchDbAuthCodeRepository.findByCode()` during OAuth 2.0 Authorization Code exchange. Ensures fast lookup of short-lived, single-use auth codes.
 
 ### Manual Index Creation (cURL)
 

@@ -4,7 +4,7 @@ import { AuthProvider } from "@/context/auth-context";
 
 export const metadata: Metadata = {
   title: "TechAxon Single Sign-On (SSO) Portal",
-  description: "OIDC Authorization Code Grant & SSO Demo Application for TechAxon Ecosystem",
+  description: "OAuth 2.0 Authorization Code Grant & SSO Demo Application for TechAxon Ecosystem",
 };
 
 export default function RootLayout({

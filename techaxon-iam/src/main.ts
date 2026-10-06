@@ -38,7 +38,7 @@ async function bootstrap() {
         .map((value) => value.trim())
         .filter(Boolean);
       const allowedPatterns = [
-        /^http:\/\/localhost:(3000|3001|8080)$/,
+        /^https?:\/\/localhost:(3000|3001|8080)$/,
         /^https?:\/\/.*\.techaxon\.localhost(:[0-9]+)?$/,
         /^https?:\/\/.*\.techaxon\.de$/,
         /^https?:\/\/.*\.techaxon\.com$/,
@@ -56,7 +56,7 @@ async function bootstrap() {
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Cookie'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Cookie', 'X-Auth-Client'],
   });
 
   // Cookie Parser for reading SSO cookies

@@ -26,6 +26,10 @@ export interface JwtPayload {
    * Token type.
    */
   type: 'access' | 'refresh' | 'verification' | 'mfa_challenge';
+
+  clientId?: string;
+  redirectUri?: string;
+  state?: string;
 }
 
 // sub  → پیدا کردن کاربر
